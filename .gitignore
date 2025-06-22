@@ -1,0 +1,23 @@
+# .gitignore
+
+# Node dependencies
+/simple-ledger-frontend/node_modules
+/simple-ledger-frontend/dist
+/simple-ledger-frontend/.vite
+
+# Go build output
+/bookkeeper-app/server
+
+# Local database file
+/bookkeeper-app/simple_ledger.db
+
+# Docker data volume on host
+/data
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE configuration files
+.vscode/
+.idea/

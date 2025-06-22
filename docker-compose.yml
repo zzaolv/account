@@ -1,0 +1,15 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: bookkeeper_app
+    restart: always
+    ports:
+      # Map host port 80 to the container's 8080 port.
+      # You can change the host port, e.g., "5173:8080"
+      - "80:8080"
+    volumes:
+      # Persist the SQLite database file on the host machine
+      - ./data:/app/data
