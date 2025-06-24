@@ -13,6 +13,8 @@ RUN npm install
 # 复制所有前端源代码
 COPY . .
 
+ENV NODE_OPTIONS=--max-old-space-size=1536
+
 RUN npm run build
 
 FROM nginx:1.25-alpine
