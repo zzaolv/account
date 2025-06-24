@@ -1,30 +1,70 @@
 /* src/index.css */
+
+/* 引入 Inter 字体 */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* 定义 CSS 变量，便于主题切换 */
+  --bg-color: #f7fafc;
+  --border-color: #e2e8f0;
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --card-shadow-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* 应用渐变背景 */
+  background-color: var(--bg-color);
 }
 
 /* 美化全局滚动条 */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
-  border-radius: 3px;
+  background: #cbd5e1;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: #a0aec0;
 }
 
-/* 【关键修复】修复 Ant Design 内容区域在移动端溢出的问题 */
+/* 修复 Ant Design 内容区域在移动端溢出的问题 */
 .ant-layout-content {
   overflow-x: hidden;
+}
+
+/* 全局卡片样式覆写 */
+.ant-card {
+  transition: box-shadow 0.3s ease-in-out, transform 0.3s ease-in-out;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--card-shadow) !important;
+}
+
+/* .ant-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--card-shadow-hover) !important;
+} */
+
+/* 表格斑马纹 */
+.ant-table-tbody > tr:nth-child(odd) > td {
+  background-color: #fafafa;
+}
+
+/* 美化表头 */
+.ant-table-thead > tr > th {
+  background-color: #f5f5f5 !important;
+  font-weight: 600 !important;
+  color: #555 !important;
 }

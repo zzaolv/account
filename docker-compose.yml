@@ -1,27 +1,26 @@
 version: '3.8'
 
 services:
+  # 后端服务定义
   backend:
-    # 构建配置
     build:
-      context: ./bookkeeper-app  # Dockerfile 所在的目录
+      context: ./bookkeeper-app
       dockerfile: Dockerfile
-    # 服务名称，用于服务间通信
     container_name: bookkeeper_backend
-    # 重启策略：除非手动停止，否则容器总会重启
     restart: unless-stopped
+    # 【新增】设置环境变量，告诉 Go 程序在容器内使用这个路径
+    environment:
+      - DB_PATH=/data/simple_ledger.db
+    # 【修改】使用命名卷（named volume）来持久化数据，这是最佳实践
     volumes:
-      - db-data:/data  # 我们需要修改Go代码，让它从/data/simple_ledger.db读写
-    # 端口映射
+      - db-data:/data
     ports:
       - "9999:8080"
-    # 健康检查（可选，但推荐）
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
-    # 网络配置
     networks:
       - app-network
 
@@ -32,15 +31,11 @@ services:
       dockerfile: Dockerfile
     container_name: bookkeeper_frontend
     restart: unless-stopped
-    # 端口映射
-    # 将宿主机的 5173 端口映射到容器的 80 端口
     ports:
       - "9988:80"
-    # 依赖关系
-    # 确保后端服务启动之后再启动前端服务
     depends_on:
       backend:
-        condition: service_healthy # 依赖于后端的健康检查结果
+        condition: service_healthy
     networks:
       - app-network
 
@@ -49,6 +44,6 @@ networks:
   app-network:
     driver: bridge
 
-# 定义卷（用于数据库持久化）
+# 定义命名卷
 volumes:
   db-data:

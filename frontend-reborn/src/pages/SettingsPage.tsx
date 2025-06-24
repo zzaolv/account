@@ -35,7 +35,7 @@ const SettingsPage: React.FC = () => {
                 </Button>
             </Card>
 
-            <Card title="数据导入 (功能开发中)">
+            <Card title="数据导入">
                 <Paragraph>
                     从 CSV 文件导入交易数据。请注意，这一个高风险操作，请在导入前务必备份好现有数据。
                 </Paragraph>

@@ -5,23 +5,34 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os" // 【新增】导入 os 包以读取环境变量
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // 导入驱动
 )
 
-// dbFile 定义数据库文件路径
-// const dbFile = "./simple_ledger.db"
-// 为了在 Docker 中使用持久化存储，修改为相对路径
-const dbFile = "/data/simple_ledger.db"
+// 【修改】getDBPath 函数会智能地决定数据库路径
+func getDBPath() string {
+	// 优先从环境变量 DB_PATH 中获取路径
+	if path := os.Getenv("DB_PATH"); path != "" {
+		return path
+	}
+	// 如果环境变量未设置，则使用适用于本地开发的相对路径
+	return "./simple_ledger.db"
+}
 
 // initializeDB 初始化数据库连接并创建表
 func initializeDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbFile+"?_foreign_keys=on")
+	dbPath := getDBPath()
+	log.Printf("正在连接数据库: %s", dbPath) // 增加日志方便调试
+
+	// 【重要】在连接字符串中添加 `_foreign_keys=on` 以强制启用外键约束
+	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 
+	// ... [后续的数据库表创建逻辑完全保持不变] ...
 	baseTables := []string{
 		`CREATE TABLE IF NOT EXISTS categories (
             "id" TEXT NOT NULL PRIMARY KEY,
@@ -74,7 +85,6 @@ func initializeDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("创建 transactions 表失败: %w", err)
 	}
 
-	// 使用 ALTER TABLE 安全地添加列
 	if !isColumnExists(db, "transactions", "from_account_id") {
 		alterSQL := `ALTER TABLE transactions ADD COLUMN from_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;`
 		if _, err := db.Exec(alterSQL); err != nil {
@@ -87,14 +97,12 @@ func initializeDB() (*sql.DB, error) {
 			return nil, fmt.Errorf("为 transactions 表添加 to_account_id 列失败: %w", err)
 		}
 	}
-	// 【新增】为月度结算添加专用字段和唯一索引
 	if !isColumnExists(db, "transactions", "settlement_month") {
 		alterSQL := `ALTER TABLE transactions ADD COLUMN settlement_month TEXT;`
 		if _, err := db.Exec(alterSQL); err != nil {
 			return nil, fmt.Errorf("为 transactions 表添加 settlement_month 列失败: %w", err)
 		}
 	}
-	// 创建唯一索引以确保幂等性
 	uniqueSettlementIndexSQL := `CREATE UNIQUE INDEX IF NOT EXISTS one_settlement_per_month_idx ON transactions (settlement_month) WHERE settlement_month IS NOT NULL;`
 	if _, err := db.Exec(uniqueSettlementIndexSQL); err != nil {
 		return nil, fmt.Errorf("为 settlement_month 创建唯一索引失败: %w", err)
