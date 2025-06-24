@@ -1,25 +1,21 @@
 // src/types.ts
-// ✨ 这是完全根据您的 Go 后端模型修正后的版本 ✨
-
-// --- 基本模型 ---
-
 export interface Category {
-  id: string; // 修正: ID 是字符串 (例如 "food_dining")
+  id: string;
   name: string;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'internal';
   icon: string;
   created_at: string;
 }
 
 export interface Transaction {
   id: number;
-  type: 'income' | 'expense' | 'repayment';
+  type: 'income' | 'expense' | 'repayment' | 'transfer' | 'settlement';
   amount: number;
   transaction_date: string;
   description: string;
-  related_loan_id?: number; // 修正: 类型为 number
-  category_id?: string;   // 修正: ID 是字符串
-  category_name?: string; // 从后端 JOIN 查询得到
+  related_loan_id?: number;
+  category_id?: string;
+  category_name?: string;
   created_at: string;
 }
 
@@ -28,15 +24,15 @@ export interface Loan {
   principal: number;
   interest_rate: number;
   loan_date: string;
-  repayment_date?: string | null; // 允许为 null
-  description?: string | null;    // 允许为 null
-  status: 'active' | 'paid';    // 修正: 状态是 active/paid
+  repayment_date?: string | null;
+  description?: string | null;
+  status: 'active' | 'paid';
   created_at: string;
 }
 
 export interface Budget {
   id: number;
-  category_id?: string | null; // 修正: ID是字符串, 允许为 null
+  category_id?: string | null;
   amount: number;
   period: 'monthly' | 'yearly';
   category_name?: string;
@@ -47,15 +43,27 @@ export interface Budget {
   month: number;
 }
 
+export interface Account {
+    id: number;
+    name: string;
+    type: 'wechat' | 'alipay' | 'card' | 'other';
+    balance: number;
+    icon: string;
+    is_primary: boolean;
+    created_at: string;
+}
+
 // --- API 请求/响应模型 ---
 
 export interface CreateTransactionRequest {
-  type: 'income' | 'expense' | 'repayment';
+  type: 'income' | 'expense' | 'repayment' | 'transfer' | 'settlement';
   amount: number;
   transaction_date: string;
   description?: string;
   category_id?: string;
   related_loan_id?: number;
+  from_account_id?: number;
+  to_account_id?: number;
 }
 
 export interface UpdateLoanRequest {
@@ -63,6 +71,13 @@ export interface UpdateLoanRequest {
   interest_rate: number;
   loan_date: string;
   repayment_date?: string | null;
+  description?: string;
+}
+
+// 【新增并导出】这个接口之前被遗漏了
+export interface SettleLoanRequest {
+  from_account_id: number;
+  repayment_date: string;
   description?: string;
 }
 
@@ -88,14 +103,34 @@ export interface GetTransactionsResponse {
   };
 }
 
+export interface CreateAccountRequest {
+    name: string;
+    type: 'wechat' | 'alipay' | 'card' | 'other';
+    balance: number;
+    icon: string;
+}
 
-// --- Dashboard & Analytics Types (这些之前是正确的) ---
+export interface UpdateAccountRequest {
+    name: string;
+    icon: string;
+}
+
+export interface TransferRequest {
+    from_account_id: number;
+    to_account_id: number;
+    amount: number;
+    date: string;
+    description?: string;
+}
 
 export interface DashboardCard {
     title: string;
     value: number;
     prev_value: number;
     icon: string;
+    meta?: {
+        account_count?: number;
+    };
 }
 
 export interface ChartDataPoint {

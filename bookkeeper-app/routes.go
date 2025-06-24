@@ -23,7 +23,7 @@ func setupRouter(handler *DBHandler) *gin.Engine {
 	}))
 
 	router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "欢迎来到简易记账本后端! V5.0 - 最终修复版"})
+		c.JSON(http.StatusOK, gin.H{"message": "欢迎来到简易记账本后端! V7.0 - 资金闭环版"})
 	})
 
 	apiV1 := router.Group("/api/v1")
@@ -42,14 +42,27 @@ func setupRouter(handler *DBHandler) *gin.Engine {
 		// 借贷 (Loan)
 		apiV1.POST("/loans", handler.CreateLoan)
 		apiV1.GET("/loans", handler.GetLoans)
-		apiV1.PUT("/loans/:id", handler.UpdateLoan) // 【新增】编辑借贷的路由
-		apiV1.PUT("/loans/:id/status", handler.UpdateLoanStatus)
+		apiV1.PUT("/loans/:id", handler.UpdateLoan)
+		apiV1.PUT("/loans/:id/status", handler.UpdateLoanStatus) // 用于恢复 'active'
+		apiV1.POST("/loans/:id/settle", handler.SettleLoan)      // 【新增】用于一键还清
 		apiV1.DELETE("/loans/:id", handler.DeleteLoan)
 
 		// 预算 (Budget)
 		apiV1.POST("/budgets", handler.CreateOrUpdateBudget)
 		apiV1.GET("/budgets", handler.GetBudgets)
 		apiV1.DELETE("/budgets/:id", handler.DeleteBudget)
+
+		// 账户 (Account)
+		accounts := apiV1.Group("/accounts")
+		{
+			accounts.GET("", handler.GetAccounts)
+			accounts.POST("", handler.CreateAccount)
+			accounts.PUT("/:id", handler.UpdateAccount)
+			accounts.DELETE("/:id", handler.DeleteAccount)
+			accounts.POST("/:id/set_primary", handler.SetPrimaryAccount)
+			accounts.POST("/transfer", handler.TransferFunds)
+			accounts.POST("/execute_monthly_transfer", handler.ExecuteMonthlyTransfer)
+		}
 
 		// 仪表盘 (Dashboard) & 分析 (Analytics)
 		apiV1.GET("/dashboard/cards", handler.GetDashboardCards)

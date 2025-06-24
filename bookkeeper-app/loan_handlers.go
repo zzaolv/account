@@ -6,20 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattn/go-sqlite3"
 )
 
-// CreateLoan (完整的，无省略)
+// CreateLoan (无修改)
 func (h *DBHandler) CreateLoan(c *gin.Context) {
 	var req UpdateLoanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的贷款数据: " + err.Error()})
 		return
 	}
-	// ... 后端日期校验逻辑 (如果已添加) ...
 
 	status := "active"
 	createdAt := time.Now().Format(time.RFC3339)
@@ -31,10 +31,7 @@ func (h *DBHandler) CreateLoan(c *gin.Context) {
 	}
 	defer stmt.Close()
 
-	// ======================= 核心修改点 (2) =======================
-	// 使用 *req.InterestRate 来获取指针指向的值
 	_, err = stmt.Exec(req.Principal, *req.InterestRate, req.LoanDate, req.RepaymentDate, req.Description, status, createdAt)
-	// ============================================================
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建贷款失败: " + err.Error()})
 		return
@@ -42,7 +39,7 @@ func (h *DBHandler) CreateLoan(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "贷款创建成功"})
 }
 
-// 【新增】UpdateLoan 编辑一笔现有的贷款
+// UpdateLoan (无修改)
 func (h *DBHandler) UpdateLoan(c *gin.Context) {
 	id := c.Param("id")
 	var req UpdateLoanRequest
@@ -50,7 +47,6 @@ func (h *DBHandler) UpdateLoan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据: " + err.Error()})
 		return
 	}
-	// ... 后端日期校验逻辑 (如果已添加) ...
 
 	stmt, err := h.DB.Prepare("UPDATE loans SET principal=?, interest_rate=?, loan_date=?, repayment_date=?, description=? WHERE id=?")
 	if err != nil {
@@ -59,10 +55,7 @@ func (h *DBHandler) UpdateLoan(c *gin.Context) {
 	}
 	defer stmt.Close()
 
-	// ======================= 核心修改点 (3) =======================
-	// 使用 *req.InterestRate 来获取指针指向的值
 	result, err := stmt.Exec(req.Principal, *req.InterestRate, req.LoanDate, req.RepaymentDate, req.Description, id)
-	// ============================================================
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新贷款失败: " + err.Error()})
 		return
@@ -73,42 +66,10 @@ func (h *DBHandler) UpdateLoan(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到指定ID的贷款"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "贷款更新成功"})
 }
 
-// 【新增】UpdateLoan 编辑一笔现有的贷款
-//func (h *DBHandler) UpdateLoan(c *gin.Context) {
-//	id := c.Param("id")
-//	var req UpdateLoanRequest
-//	if err := c.ShouldBindJSON(&req); err != nil {
-//		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据: " + err.Error()})
-//		return
-//	}
-//
-//	stmt, err := h.DB.Prepare("UPDATE loans SET principal=?, interest_rate=?, loan_date=?, repayment_date=?, description=? WHERE id=?")
-//	if err != nil {
-//		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库准备更新语句失败: " + err.Error()})
-//		return
-//	}
-//	defer stmt.Close()
-//
-//	result, err := stmt.Exec(req.Principal, req.InterestRate, req.LoanDate, req.RepaymentDate, req.Description, id)
-//	if err != nil {
-//		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新贷款失败: " + err.Error()})
-//		return
-//	}
-//
-//	rowsAffected, _ := result.RowsAffected()
-//	if rowsAffected == 0 {
-//		c.JSON(http.StatusNotFound, gin.H{"error": "未找到指定ID的贷款"})
-//		return
-//	}
-//
-//	c.JSON(http.StatusOK, gin.H{"message": "贷款更新成功"})
-//}
-
-// GetLoans (完整的，无省略)
+// GetLoans (无修改)
 func (h *DBHandler) GetLoans(c *gin.Context) {
 	rows, err := h.DB.Query("SELECT id, principal, interest_rate, loan_date, repayment_date, description, status, created_at FROM loans ORDER BY status ASC, loan_date DESC")
 	if err != nil {
@@ -144,36 +105,110 @@ func (h *DBHandler) GetLoans(c *gin.Context) {
 			TotalRepaid:        totalRepaid,
 			OutstandingBalance: l.Principal - totalRepaid,
 		}
-
 		loans = append(loans, lr)
 	}
 	c.JSON(http.StatusOK, loans)
 }
 
-// UpdateLoanStatus (完整的，无省略)
-func (h *DBHandler) UpdateLoanStatus(c *gin.Context) {
-	id := c.Param("id")
-	var payload struct {
-		Status string `json:"status" binding:"required,oneof=active paid"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的状态: " + err.Error()})
+// 【新增】SettleLoan 一键还清贷款，包含资金流动
+func (h *DBHandler) SettleLoan(c *gin.Context) {
+	loanIDStr := c.Param("id")
+	loanID, err := strconv.ParseInt(loanIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的贷款ID"})
 		return
 	}
 
-	var query string
-	var args []interface{}
-	if payload.Status == "paid" {
-		query = "UPDATE loans SET status = ?, repayment_date = ? WHERE id = ?"
-		args = append(args, payload.Status, time.Now().Format("2006-01-02"), id)
-	} else {
-		query = "UPDATE loans SET status = ?, repayment_date = NULL WHERE id = ?"
-		args = append(args, payload.Status, id)
+	var req SettleLoanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据: " + err.Error()})
+		return
 	}
 
-	res, err := h.DB.Exec(query, args...)
+	tx, err := h.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "开启事务失败: " + err.Error()})
+		return
+	}
+	defer tx.Rollback()
+
+	// 1. 获取贷款当前信息和待还金额
+	var principal float64
+	var loanDesc sql.NullString
+	err = tx.QueryRow("SELECT principal, description FROM loans WHERE id = ?", loanID).Scan(&principal, &loanDesc)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "找不到指定的贷款"})
+		return
+	}
+	var totalRepaid float64
+	tx.QueryRow("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'repayment' AND related_loan_id = ?", loanID).Scan(&totalRepaid)
+
+	outstandingBalance := principal - totalRepaid
+	if outstandingBalance <= 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "该贷款已还清或无需还款"})
+		return
+	}
+
+	// 2. 从指定账户扣款
+	res, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", outstandingBalance, req.FromAccountID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新扣款账户余额失败: " + err.Error()})
+		return
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "找不到指定的扣款账户"})
+		return
+	}
+
+	// 3. 创建还款流水
+	description := req.Description
+	if description == "" {
+		description = fmt.Sprintf("还清贷款: %s", loanDesc.String)
+	}
+	createdAt := time.Now().Format(time.RFC3339)
+	loanRepaymentCategoryID := "loan_repayment"
+	_, err = tx.Exec(
+		"INSERT INTO transactions (type, amount, transaction_date, description, category_id, related_loan_id, from_account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		"repayment", outstandingBalance, req.RepaymentDate, description, loanRepaymentCategoryID, loanID, req.FromAccountID, createdAt,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建还款流水失败: " + err.Error()})
+		return
+	}
+
+	// 4. 更新贷款状态为 'paid'
+	_, err = tx.Exec("UPDATE loans SET status = ?, repayment_date = ? WHERE id = ?", "paid", req.RepaymentDate, loanID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新贷款状态失败: " + err.Error()})
+		return
+	}
+
+	// 5. 提交事务
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交事务失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "贷款已成功还清"})
+}
+
+// UpdateLoanStatus 【修改】此接口现在只用于将 'paid' 状态改回 'active'，恢复操作
+func (h *DBHandler) UpdateLoanStatus(c *gin.Context) {
+	id := c.Param("id")
+	var payload struct {
+		Status string `json:"status" binding:"required,oneof=active"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的状态，此接口只接受 'active' 用于恢复贷款。"})
+		return
+	}
+
+	// 只处理恢复为 active 的情况
+	query := "UPDATE loans SET status = ?, repayment_date = NULL WHERE id = ?"
+	res, err := h.DB.Exec(query, payload.Status, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "恢复贷款状态失败: " + err.Error()})
 		return
 	}
 
@@ -182,10 +217,10 @@ func (h *DBHandler) UpdateLoanStatus(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到指定ID的贷款"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "贷款状态更新成功"})
+	c.JSON(http.StatusOK, gin.H{"message": "贷款状态已恢复为 'active'"})
 }
 
-// DeleteLoan (完整的，无省略)
+// DeleteLoan (无修改)
 func (h *DBHandler) DeleteLoan(c *gin.Context) {
 	id := c.Param("id")
 

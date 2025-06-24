@@ -7,7 +7,7 @@ import {
   theme,
   Grid,
   ConfigProvider,
-  App as AntApp, // 使用 AntApp 包裹以使用 message, Modal 等静态方法
+  App as AntApp,
   FloatButton,
   message,
 } from 'antd';
@@ -20,7 +20,8 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PlusOutlined,
-  AppstoreAddOutlined, // 为“分类管理”新增的图标
+  AppstoreAddOutlined,
+  WalletOutlined, // 【新增】为“账户管理”新增的图标
 } from '@ant-design/icons';
 import zhCN from 'antd/locale/zh_CN';
 import dayjs from 'dayjs';
@@ -32,7 +33,8 @@ import TransactionPage from './pages/TransactionPage';
 import LoanPage from './pages/LoanPage';
 import BudgetPage from './pages/BudgetsPage';
 import SettingsPage from './pages/SettingsPage';
-import CategoryPage from './pages/CategoryPage'; // 【新增】导入我们新的分类页面
+import CategoryPage from './pages/CategoryPage';
+import AccountsPage from './pages/AccountsPage'; // 【新增】导入我们新的账户页面
 
 // 导入新增交易的弹窗组件
 import AddTransactionModal from './components/AddTransactionModal';
@@ -43,16 +45,16 @@ dayjs.locale('zh-cn');
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
 
-// 【修改】定义页面键的类型，加入 'categories'
-type PageKey = 'dashboard' | 'transactions' | 'loans' | 'budgets' | 'categories' | 'settings';
+// 【修改】定义页面键的类型，加入 'accounts'
+type PageKey = 'dashboard' | 'transactions' | 'loans' | 'budgets' | 'categories' | 'accounts' | 'settings';
 
 // 主应用的核心逻辑组件
 const MainApp = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageKey>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0); // 用于触发页面刷新的状态
-  
+  const [refreshKey, setRefreshKey] = useState(0);
+
   const screens = useBreakpoint();
   const isMobile = !screens.lg;
 
@@ -62,25 +64,22 @@ const MainApp = () => {
 
   const handleMenuClick = ({ key }: { key: string }) => { setCurrentPage(key as PageKey); };
   
-  // 渲染当前选中的页面
   const renderPage = () => {
-    // 传递 refreshKey，以便在需要时重新加载页面数据
     switch (currentPage) {
       case 'dashboard': return <DashboardPage key={refreshKey} />;
       case 'transactions': return <TransactionPage key={refreshKey} />;
       case 'loans': return <LoanPage key={refreshKey} />;
       case 'budgets': return <BudgetPage key={refreshKey} />;
       case 'categories': return <CategoryPage key={refreshKey} />;
+      case 'accounts': return <AccountsPage key={refreshKey} />; // 【新增】
       case 'settings': return <SettingsPage key={refreshKey} />;
       default: return <DashboardPage key={refreshKey} />;
     }
   };
   
-  // 处理“记一笔”成功后的回调
   const handleAddSuccess = () => {
     setIsModalOpen(false);
     message.success('添加成功！');
-    // 【优化】不再强制刷新整个网页，而是更新一个key来触发组件的重新渲染和数据获取
     setRefreshKey(prevKey => prevKey + 1);
   };
 
@@ -102,10 +101,11 @@ const MainApp = () => {
           mode="inline"
           selectedKeys={[currentPage]}
           onClick={handleMenuClick}
-          // 【修改】在菜单项中加入“分类管理”
+          // 【修改】在菜单项中加入“账户管理”
           items={[
             { key: 'dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
             { key: 'transactions', icon: <SwapOutlined />, label: '交易流水' },
+            { key: 'accounts', icon: <WalletOutlined />, label: '账户管理' }, // 【新增】
             { key: 'budgets', icon: <TrophyOutlined />, label: '预算规划' },
             { key: 'categories', icon: <AppstoreAddOutlined />, label: '分类管理' },
             { key: 'loans', icon: <CreditCardOutlined />, label: '借贷管理' },

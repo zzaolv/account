@@ -1,6 +1,4 @@
 // src/pages/DashboardPage.tsx
-// ✨ 禁用悬浮提示稳定版：彻底解决显示 null 的问题 ✨
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Space, message, Row, Col, Card, Empty, Spin, DatePicker, Radio, Statistic, Tooltip, Typography, Progress, List, Tag, Divider, Skeleton } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
@@ -10,25 +8,58 @@ import type { DashboardCard, AnalyticsChartsResponse, DashboardWidgetsResponse, 
 import IconDisplay from '../components/IconPicker';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
+import { getSteppedColor } from '../utils/colorUtils'; // 【新增】导入阶梯颜色工具
 
 const { Title, Text } = Typography;
 
-// --- 子组件 (保持不变) ---
+// --- 子组件 ---
 const StatCard: React.FC<{ item: DashboardCard }> = ({ item }) => {
-    let isPositive = item.value >= 0;
-    if (item.title === '总支出') isPositive = false;
-    const color = isPositive ? '#52c41a' : '#f5222d';
+    // 【修改】使用阶梯颜色
+    const color = getSteppedColor(item.title === '总支出' ? -item.value : item.value);
+
     let percentageChange: number | null = null;
-    if (item.prev_value !== 0) {
-        percentageChange = ((item.value - item.prev_value) / Math.abs(item.prev_value)) * 100;
-    } else if (item.value !== 0) {
-        percentageChange = 100;
+    if (item.title !== '总存款' && item.title !== '总借款') {
+         if (item.prev_value !== 0) {
+            percentageChange = ((item.value - item.prev_value) / Math.abs(item.prev_value)) * 100;
+        } else if (item.value !== 0) {
+            percentageChange = 100;
+        }
     }
-    return ( <Card bordered={false} style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.09)' }}> <Statistic title={<span style={{fontSize: 14}}>{item.title}</span>} value={item.value} precision={2} prefix="¥" valueStyle={{ color, fontSize: 24, fontWeight: 500 }} suffix={ percentageChange !== null && item.title !== '总借款' ? ( <Tooltip title={`与上期 (¥${item.prev_value.toFixed(2)}) 比较`}> <span style={{ color: percentageChange >= 0 ? '#52c41a' : '#f5222d', fontSize: 14, marginLeft: 8 }}> {percentageChange >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />} {Math.abs(percentageChange).toFixed(1)}% </span> </Tooltip> ) : null } /> <div style={{ position: 'absolute', right: 20, top: '50%', transform: 'translateY(-50%)', fontSize: 32, color: 'rgba(0,0,0,.1)' }}> <IconDisplay name={item.icon} /> </div> </Card> );
+
+    return ( 
+        <Card bordered={false} style={{ boxShadow: '0 2px 8px rgba(0, 0, 0, 0.09)' }}> 
+            <Statistic 
+                title={
+                    <span style={{fontSize: 14}}>
+                        {item.title} 
+                        {item.title === '总存款' && item.meta?.account_count !== undefined && (
+                            <Text type="secondary"> ({item.meta.account_count}个账户)</Text>
+                        )}
+                    </span>
+                } 
+                value={item.value} 
+                precision={2} 
+                prefix="¥" 
+                valueStyle={{ color, fontSize: 24, fontWeight: 500 }} 
+                suffix={ 
+                    percentageChange !== null ? ( 
+                        <Tooltip title={`与上期 (¥${item.prev_value.toFixed(2)}) 比较`}> 
+                            <span style={{ color: percentageChange >= 0 ? '#52c41a' : '#f5222d', fontSize: 14, marginLeft: 8 }}> 
+                                {percentageChange >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />} {Math.abs(percentageChange).toFixed(1)}% 
+                            </span> 
+                        </Tooltip> 
+                    ) : null 
+                } 
+            /> 
+            <div style={{ position: 'absolute', right: 20, top: '50%', transform: 'translateY(-50%)', fontSize: 32, color: 'rgba(0,0,0,.1)' }}> 
+                <IconDisplay name={item.icon} /> 
+            </div> 
+        </Card> 
+    );
 };
 const BudgetProgressCard: React.FC<{ budget: DashboardBudgetSummary }> = ({ budget }) => { 
     const title = budget.period === 'monthly' ? "本月总预算" : "本年总预算";
-    return ( <Card title={title} size="small"> {budget.is_set ? ( <> <Tooltip title={`进度: ${(budget.progress * 100).toFixed(1)}%`}> <Progress percent={Math.round(budget.progress * 100)} strokeColor={budget.progress > 1 ? '#ff4d4f' : '#1677ff'} status={budget.progress > 1 ? 'exception' : 'active'} /> </Tooltip> <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'rgba(0, 0, 0, 0.45)', marginTop: '8px' }}> <span>已用: ¥{budget.spent.toFixed(2)}</span> <span>预算: ¥{budget.amount.toFixed(2)}</span> </div> </> ) : ( <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未设置预算" /> )} </Card> );
+    return ( <Card title={title} size="small"> {budget.is_set ? ( <> <Tooltip title={`进度: ${(budget.progress * 100).toFixed(1)}%`}> <Progress percent={Math.round(budget.progress * 100)} strokeColor={budget.progress > 1 ? '#ff4d4f' : '#1677ff'} status={budget.progress > 1 ? 'exception' : 'normal'} /> </Tooltip> <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'rgba(0, 0, 0, 0.45)', marginTop: '8px' }}> <span>已用: ¥{budget.spent.toFixed(2)}</span> <span>预算: ¥{budget.amount.toFixed(2)}</span> </div> </> ) : ( <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未设置预算" /> )} </Card> );
 };
 const LoanWidget: React.FC<{ loan: DashboardLoanInfo }> = ({ loan }) => {
     let timeProgress = 0;
@@ -69,7 +100,13 @@ const DashboardPage: React.FC = () => {
                 getAnalyticsCharts(filter),
                 getDashboardWidgets(filter)
             ]);
-            setCards(cardsRes.data || []);
+            // 【修改】后端返回的卡片现在可能包含总存款，需要正确排序
+            const cardOrder = ['总收入', '总支出', '净结余', '总存款', '总借款'];
+            const sortedCards = (cardsRes.data || []).sort((a, b) => {
+                return cardOrder.indexOf(a.title) - cardOrder.indexOf(b.title);
+            });
+
+            setCards(sortedCards || []);
             setCharts(chartsRes.data || null);
             setWidgets(widgetsRes.data || null);
         } catch (error) {
@@ -114,7 +151,6 @@ const DashboardPage: React.FC = () => {
         height: 250,
         area: { style: { fill: 'l(270) 0:#ffffff 1:#1677ff' } },
         line: { style: { stroke: '#1677ff', lineWidth: 2 } },
-        // 核心修改点：禁用 tooltip
         tooltip: false as const,
     };
 
@@ -131,7 +167,6 @@ const DashboardPage: React.FC = () => {
             type: 'outer',
             content: (datum: any) => `${datum.name}: ¥${(datum.value || 0).toFixed(2)}`,
         },
-        // 核心修改点：禁用 tooltip
         tooltip: false as const,
         statistic: {
             title: { content: '总支出', style: { fontSize: '14px' } },

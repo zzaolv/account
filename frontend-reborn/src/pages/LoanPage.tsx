@@ -1,43 +1,79 @@
 // src/pages/LoanPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, DatePicker, Space, Popconfirm } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons';
-import { getLoans, createLoan, updateLoan, deleteLoan, updateLoanStatus } from '../services/api';
-import type { LoanResponse, UpdateLoanRequest } from '../types';
+import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, DatePicker, Space, Popconfirm, Select, Typography } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, UndoOutlined } from '@ant-design/icons';
+import { getLoans, createLoan, updateLoan, deleteLoan, updateLoanStatus, getAccounts, settleLoan } from '../services/api';
+import type { LoanResponse, UpdateLoanRequest, Account, SettleLoanRequest } from '../types';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import axios from 'axios';
 
+const { Text } = Typography;
+
 const LoanPage: React.FC = () => {
     const [loans, setLoans] = useState<LoanResponse[]>([]);
+    const [accounts, setAccounts] = useState<Account[]>([]);
     const [loading, setLoading] = useState(true);
-    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isSettleModalOpen, setIsSettleModalOpen] = useState(false); // 【新增】还清弹窗状态
     const [editingLoan, setEditingLoan] = useState<LoanResponse | null>(null);
-    const [form] = Form.useForm();
+    const [settlingLoan, setSettlingLoan] = useState<LoanResponse | null>(null); // 【新增】正在还清的贷款
+    const [editForm] = Form.useForm();
+    const [settleForm] = Form.useForm(); // 【新增】还清表单
 
-    const fetchLoans = useCallback(async () => {
+    const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await getLoans();
-            setLoans(res.data || []);
+            const [loanRes, accountRes] = await Promise.all([getLoans(), getAccounts()]);
+            setLoans(loanRes.data || []);
+            setAccounts(accountRes.data || []);
         } catch (error) {
-            message.error('获取借贷列表失败');
+            message.error('获取数据失败');
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchLoans();
-    }, [fetchLoans]);
+        fetchData();
+    }, [fetchData]);
 
     const handleCancel = () => {
-        setIsModalOpen(false);
+        setIsEditModalOpen(false);
+        setIsSettleModalOpen(false);
         setEditingLoan(null);
-        form.resetFields();
+        setSettlingLoan(null);
+        editForm.resetFields();
+        settleForm.resetFields();
+    };
+    
+    // 打开编辑/新增弹窗
+    const openEditModal = (loan: LoanResponse | null) => {
+        setEditingLoan(loan);
+        if (loan) {
+            editForm.setFieldsValue({
+                ...loan,
+                loan_date: dayjs(loan.loan_date),
+                repayment_date: loan.repayment_date ? dayjs(loan.repayment_date) : null,
+                interest_rate: loan.interest_rate * 100,
+            });
+        } else {
+            editForm.resetFields();
+        }
+        setIsEditModalOpen(true);
     };
 
-    const handleFormSubmit = async (values: any) => {
+    // 【新增】打开还清弹窗
+    const openSettleModal = (loan: LoanResponse) => {
+        setSettlingLoan(loan);
+        settleForm.setFieldsValue({
+            repayment_date: dayjs(),
+            description: `还清贷款: ${loan.description || `贷款 #${loan.id}`}`,
+        });
+        setIsSettleModalOpen(true);
+    };
+
+    const handleEditFormSubmit = async (values: any) => {
         const postData: UpdateLoanRequest = {
             description: values.description,
             principal: parseFloat(values.principal),
@@ -55,38 +91,38 @@ const LoanPage: React.FC = () => {
                 message.success('借贷记录添加成功！');
             }
             handleCancel();
-            await fetchLoans();
+            await fetchData();
         } catch (error) {
-            if (axios.isAxiosError(error) && error.response) {
-                message.error(error.response.data.error || '操作失败');
-            } else {
-                message.error('操作失败');
-            }
+            message.error(axios.isAxiosError(error) ? error.response?.data.error : '操作失败');
+        }
+    };
+
+    // 【新增】处理还清表单提交
+    const handleSettleFormSubmit = async (values: any) => {
+        if (!settlingLoan) return;
+        const postData: SettleLoanRequest = {
+            from_account_id: values.from_account_id,
+            repayment_date: values.repayment_date.format('YYYY-MM-DD'),
+            description: values.description,
+        };
+        try {
+            await settleLoan(settlingLoan.id, postData);
+            message.success('贷款已成功还清！');
+            handleCancel();
+            await fetchData();
+        } catch (error) {
+            message.error(axios.isAxiosError(error) ? error.response?.data.error : '还清操作失败');
         }
     };
     
-    const openModal = (loan: LoanResponse | null) => {
-        setEditingLoan(loan);
-        if (loan) {
-            form.setFieldsValue({
-                ...loan,
-                loan_date: dayjs(loan.loan_date),
-                repayment_date: loan.repayment_date ? dayjs(loan.repayment_date) : null,
-                interest_rate: loan.interest_rate * 100,
-            });
-        } else {
-            form.resetFields();
-        }
-        setIsModalOpen(true);
-    };
-
-    const handleUpdateStatus = async (id: number, status: 'paid' | 'active') => {
+    // 【修改】只处理恢复为 active
+    const handleRestoreStatus = async (id: number) => {
         try {
-            await updateLoanStatus(id, status);
-            message.success('状态更新成功！');
-            await fetchLoans();
+            await updateLoanStatus(id, 'active');
+            message.success('状态已恢复为 "活动中"！');
+            await fetchData();
         } catch (error) {
-            message.error('更新失败');
+            message.error('恢复失败');
         }
     };
 
@@ -94,13 +130,9 @@ const LoanPage: React.FC = () => {
         try {
             await deleteLoan(id);
             message.success('删除成功！');
-            await fetchLoans();
+            await fetchData();
         } catch (error: unknown) {
-            if (axios.isAxiosError(error) && error.response) {
-                message.error(error.response.data.error || '删除失败');
-            } else {
-                message.error('删除失败，发生未知错误');
-            }
+            message.error(axios.isAxiosError(error) ? error.response?.data.error : '删除失败');
         }
     };
 
@@ -109,22 +141,24 @@ const LoanPage: React.FC = () => {
         { title: '本金', dataIndex: 'principal', key: 'principal', render: (amount: number) => `¥${amount.toFixed(2)}` },
         { title: '待还余额', dataIndex: 'outstanding_balance', key: 'outstanding_balance', render: (amount: number) => `¥${amount.toFixed(2)}` },
         { title: '借款日期', dataIndex: 'loan_date', key: 'loan_date' },
-        { title: '计划还款日', dataIndex: 'repayment_date', key: 'repayment_date', render: (date: string | null) => date || '-' },
+        { title: '实际还款日', dataIndex: 'repayment_date', key: 'repayment_date', render: (date: string | null) => date || '-' },
         { title: '状态', dataIndex: 'status', key: 'status', render: (status: string) => <Tag color={status === 'active' ? 'processing' : 'success'}>{status === 'active' ? '活动中' : '已还清'}</Tag> },
         {
             title: '操作',
             key: 'action',
-            render: (_, record: LoanResponse) => ( // 【修正】添加类型
+            render: (_, record: LoanResponse) => (
                 <Space>
-                    <Button type="link" icon={<EditOutlined />} onClick={() => openModal(record)}>编辑</Button>
+                    <Button type="link" icon={<EditOutlined />} onClick={() => openEditModal(record)}>编辑</Button>
                     {record.status === 'active' && (
-                        // 【修正】确保 onConfirm 正确绑定
-                        <Popconfirm title="确定标记为已还清吗?" onConfirm={() => handleUpdateStatus(record.id, 'paid')} okText="确定" cancelText="取消">
-                            <Button type="link" icon={<CheckCircleOutlined />}>还清</Button>
+                        // 【修改】点击“还清”现在会打开一个 Modal
+                        <Button type="link" icon={<CheckCircleOutlined />} onClick={() => openSettleModal(record)}>还清</Button>
+                    )}
+                    {record.status === 'paid' && (
+                        <Popconfirm title="确定要将此贷款恢复为“活动中”吗？" onConfirm={() => handleRestoreStatus(record.id)}>
+                            <Button type="link" icon={<UndoOutlined />}>恢复</Button>
                         </Popconfirm>
                     )}
-
-                    <Popconfirm title="确定删除这笔借款吗?" description="有关联还款记录的无法删除" onConfirm={() => handleDelete(record.id)} okText="确定" cancelText="取消">
+                    <Popconfirm title="确定删除这笔借款吗?" description="有关联还款记录的无法删除" onConfirm={() => handleDelete(record.id)}>
                         <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
                     </Popconfirm>
                 </Space>
@@ -134,39 +168,35 @@ const LoanPage: React.FC = () => {
 
     return (
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <Card title="借贷管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>新增借贷</Button>} />
+            <Card title="借贷管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditModal(null)}>新增借贷</Button>} />
             <Card><Table columns={columns} dataSource={loans} rowKey="id" loading={loading} /></Card>
-            <Modal title={editingLoan ? "编辑借贷" : "新增借贷"} open={isModalOpen} onOk={form.submit} onCancel={handleCancel} destroyOnClose>
-                <Form form={form} layout="vertical" onFinish={handleFormSubmit}>
+
+            <Modal title={editingLoan ? "编辑借贷" : "新增借贷"} open={isEditModalOpen} onOk={editForm.submit} onCancel={handleCancel} destroyOnHidden>
+                <Form form={editForm} layout="vertical" onFinish={handleEditFormSubmit}>
                     <Form.Item name="description" label="描述" rules={[{ required: true }]}><Input /></Form.Item>
                     <Form.Item name="principal" label="本金" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} prefix="¥" min={0} precision={2} /></Form.Item>
                     <Form.Item name="interest_rate" label="年利率(%)" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} suffix="%" min={-1} /></Form.Item>
                     <Form.Item name="loan_date" label="借款日期" rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
-                    <Form.Item
-                        name="repayment_date"
-                        label="计划还款日期 (选填)"
-                        dependencies={['loan_date']} // 依赖于 loan_date 字段
-                        rules={[
-                            // validator 是一个返回 Promise 的函数
-                            ({ getFieldValue }) => ({
-                                validator(_, value) {
-                                    const loanDate = getFieldValue('loan_date');
-                                    // 如果没有设置还款日期或借款日期，则通过校验
-                                    if (!value || !loanDate) {
-                                        return Promise.resolve();
-                                    }
-                                    // 如果还款日期在借款日期之前，则校验失败
-                                    if (value.isBefore(loanDate)) {
-                                        return Promise.reject(new Error('还款日期不能早于借款日期！'));
-                                    }
-                                    return Promise.resolve();
-                                },
-                            }),
-                        ]}
-                    >
+                    <Form.Item name="repayment_date" label="计划还款日期 (选填)" dependencies={['loan_date']} rules={[({ getFieldValue }) => ({ validator(_, value) { if (!value || !getFieldValue('loan_date') || !value.isBefore(getFieldValue('loan_date'))) { return Promise.resolve(); } return Promise.reject(new Error('还款日期不能早于借款日期！')); }, }), ]}>
                         <DatePicker style={{ width: '100%' }} />
                     </Form.Item>
-                    {/* ============================================================ */}
+                </Form>
+            </Modal>
+            
+            {/* 【新增】还清贷款的 Modal */}
+            <Modal title="确认还清贷款" open={isSettleModalOpen} onOk={settleForm.submit} onCancel={handleCancel} destroyOnHidden>
+                <Form form={settleForm} layout="vertical" onFinish={handleSettleFormSubmit}>
+                    <p>您正在为贷款“<Text strong>{settlingLoan?.description || `贷款 #${settlingLoan?.id}`}</Text>”进行结算。</p>
+                    <p>待还清金额: <Text type="danger" strong>¥{settlingLoan?.outstanding_balance.toFixed(2)}</Text></p>
+                    <Form.Item name="from_account_id" label="扣款账户" rules={[{ required: true, message: '请选择扣款账户' }]}>
+                        <Select placeholder="选择资金来源账户">
+                            {accounts.map(acc => <Select.Option key={acc.id} value={acc.id}>{`${acc.name} (余额: ¥${acc.balance.toFixed(2)})`}</Select.Option>)}
+                        </Select>
+                    </Form.Item>
+                    <Form.Item name="repayment_date" label="还款日期" rules={[{ required: true }]}>
+                        <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item name="description" label="备注"><Input.TextArea rows={2} /></Form.Item>
                 </Form>
             </Modal>
         </Space>
