@@ -11,7 +11,9 @@ import (
 )
 
 // dbFile 定义数据库文件路径
-const dbFile = "./simple_ledger.db"
+// const dbFile = "./simple_ledger.db"
+// 为了在 Docker 中使用持久化存储，修改为相对路径
+const dbFile = "/data/simple_ledger.db"
 
 // initializeDB 初始化数据库连接并创建表
 func initializeDB() (*sql.DB, error) {
