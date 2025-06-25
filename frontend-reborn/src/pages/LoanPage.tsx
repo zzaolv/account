@@ -1,7 +1,9 @@
 // src/pages/LoanPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, DatePicker, Space, Popconfirm, Select, Typography } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, UndoOutlined } from '@ant-design/icons';
+// 【新增】导入 Grid, Dropdown, Menu
+import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, DatePicker, Space, Popconfirm, Select, Typography, Grid, Dropdown, Menu } from 'antd';
+// 【新增】导入 MoreOutlined 图标
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, UndoOutlined, MoreOutlined } from '@ant-design/icons';
 import { getLoans, createLoan, updateLoan, deleteLoan, updateLoanStatus, getAccounts, settleLoan } from '../services/api';
 import type { LoanResponse, UpdateLoanRequest, Account, SettleLoanRequest } from '../types';
 import type { ColumnsType } from 'antd/es/table';
@@ -10,6 +12,7 @@ import axios from 'axios';
 import { motion } from 'framer-motion';
 
 const { Text, Title } = Typography;
+const { useBreakpoint } = Grid; // 【新增】正确使用 useBreakpoint
 
 const MotionRow = (props: any) => (
     <motion.tr {...props} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} />
@@ -25,6 +28,9 @@ const LoanPage: React.FC = () => {
     const [settlingLoan, setSettlingLoan] = useState<LoanResponse | null>(null);
     const [editForm] = Form.useForm();
     const [settleForm] = Form.useForm();
+    
+    const screens = useBreakpoint(); // 【新增】获取屏幕断点信息
+    const isMobile = !screens.md; // 【新增】定义 md (768px) 以下为移动端，给借贷页面多一点空间
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -84,19 +90,82 @@ const LoanPage: React.FC = () => {
         } catch (error: unknown) { message.error(axios.isAxiosError(error) ? error.response?.data.error : '删除失败'); }
     };
 
+    // 【核心修改】定义借贷管理的操作菜单项
+    const getActionMenuItems = (record: LoanResponse) => {
+        const items = [];
+        items.push(<Menu.Item key="edit" icon={<EditOutlined />} onClick={() => openEditModal(record)}>编辑</Menu.Item>);
+        if (record.status === 'active') {
+            items.push(<Menu.Item key="settle" icon={<CheckCircleOutlined />} onClick={() => openSettleModal(record)}>还清</Menu.Item>);
+        }
+        if (record.status === 'paid') {
+            items.push(
+                <Menu.Item key="restore" icon={<UndoOutlined />}>
+                    <Popconfirm title="确定要将此贷款恢复为“活动中”吗？" onConfirm={() => handleRestoreStatus(record.id)}>
+                        <span style={{color: 'inherit'}}>恢复</span>
+                    </Popconfirm>
+                </Menu.Item>
+            );
+        }
+        items.push(
+            <Menu.Item key="delete" danger icon={<DeleteOutlined />}>
+                <Popconfirm title="确定删除这笔借款吗?" description="有关联还款记录的无法删除" onConfirm={() => handleDelete(record.id)}>
+                    <span style={{color: 'inherit'}}>删除</span>
+                </Popconfirm>
+            </Menu.Item>
+        );
+        return <Menu>{items}</Menu>;
+    };
+
     const columns: ColumnsType<LoanResponse> = [
         { title: '描述', dataIndex: 'description', key: 'description' },
         { title: '本金', dataIndex: 'principal', key: 'principal', responsive: ['md'], render: (amount: number) => `¥${amount.toFixed(2)}` },
         { title: '待还余额', dataIndex: 'outstanding_balance', key: 'outstanding_balance', render: (amount: number) => <Text type="danger" strong>¥{amount.toFixed(2)}</Text> },
         { title: '借款日期', dataIndex: 'loan_date', key: 'loan_date', responsive: ['lg'] },
-        { title: '状态', dataIndex: 'status', key: 'status', render: (status: string) => <Tag color={status === 'active' ? 'processing' : 'success'}>{status === 'active' ? '活动中' : '已还清'}</Tag> },
-        { title: '操作', key: 'action', align: 'center', width: 220, render: (_, record: LoanResponse) => (<Space><Button type="link" icon={<EditOutlined />} onClick={() => openEditModal(record)}>编辑</Button>{record.status === 'active' && (<Button type="link" icon={<CheckCircleOutlined />} onClick={() => openSettleModal(record)}>还清</Button>)}{record.status === 'paid' && (<Popconfirm title="确定要将此贷款恢复为“活动中”吗？" onConfirm={() => handleRestoreStatus(record.id)}><Button type="link" icon={<UndoOutlined />}>恢复</Button></Popconfirm>)}<Popconfirm title="确定删除这笔借款吗?" description="有关联还款记录的无法删除" onConfirm={() => handleDelete(record.id)}><Button type="link" danger icon={<DeleteOutlined />}>删除</Button></Popconfirm></Space>), },
+        { title: '状态', dataIndex: 'status', key: 'status', responsive: ['sm'], render: (status: string) => <Tag color={status === 'active' ? 'processing' : 'success'}>{status === 'active' ? '活动中' : '已还清'}</Tag> },
+        { 
+            title: '操作', 
+            key: 'action', 
+            align: 'center', 
+            width: isMobile ? 60 : 220, // 移动端宽度变小
+            render: (_, record: LoanResponse) => (
+                isMobile ? (
+                    // 移动端渲染 Dropdown
+                    <Dropdown overlay={getActionMenuItems(record)} trigger={['click']}>
+                        <Button type="text" icon={<MoreOutlined />} />
+                    </Dropdown>
+                ) : (
+                    // 桌面端保持原有布局
+                    <Space>
+                        <Button type="link" icon={<EditOutlined />} onClick={() => openEditModal(record)}>编辑</Button>
+                        {record.status === 'active' && (<Button type="link" icon={<CheckCircleOutlined />} onClick={() => openSettleModal(record)}>还清</Button>)}
+                        {record.status === 'paid' && (<Popconfirm title="确定要将此贷款恢复为“活动中”吗？" onConfirm={() => handleRestoreStatus(record.id)}><Button type="link" icon={<UndoOutlined />}>恢复</Button></Popconfirm>)}
+                        <Popconfirm title="确定删除这笔借款吗?" description="有关联还款记录的无法删除" onConfirm={() => handleDelete(record.id)}><Button type="link" danger icon={<DeleteOutlined />}>删除</Button></Popconfirm>
+                    </Space>
+                )
+            ), 
+        },
     ];
+    
+    // 【优化】根据是否为移动端，动态生成最终的列配置
+    const getFinalColumns = () => {
+        if (!isMobile) return columns;
+        // 在移动端，我们只保留“描述”、“待还余额”和“操作”
+        return columns.filter(col => ['description', 'outstanding_balance', 'action'].includes(String(col.key)));
+    };
 
     return (
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Card title={<Title level={4} style={{ margin: 0 }}>借贷管理</Title>} extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditModal(null)}>新增借贷</Button>} />
-            <Card><Table columns={columns} dataSource={loans} rowKey="id" loading={loading} components={{ body: { row: MotionRow } }} scroll={{ x: 'max-content' }}/></Card>
+            <Card>
+                <Table 
+                    columns={getFinalColumns()} 
+                    dataSource={loans} 
+                    rowKey="id" 
+                    loading={loading} 
+                    components={{ body: { row: MotionRow } }} 
+                    scroll={{ x: 'max-content' }}
+                />
+            </Card>
             <Modal title={editingLoan ? "编辑借贷" : "新增借贷"} open={isEditModalOpen} onOk={editForm.submit} onCancel={handleCancel} destroyOnHidden>
                 <Form form={editForm} layout="vertical" onFinish={handleEditFormSubmit}>
                     <Form.Item name="description" label="描述" rules={[{ required: true }]}><Input /></Form.Item>

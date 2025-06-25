@@ -1,7 +1,8 @@
 // src/pages/AccountsPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Tooltip, Row, Col, Typography, DatePicker, App } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, StarFilled, StarOutlined, SwapOutlined, ThunderboltOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+// 【核心修正】将 Grid 导入，并移除错误的 useBreakpoint 导入
+import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Tooltip, Row, Col, Typography, DatePicker, App, Dropdown, Menu, Grid } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, StarFilled, StarOutlined, SwapOutlined, ThunderboltOutlined, QuestionCircleOutlined, MoreOutlined } from '@ant-design/icons';
 import { getAccounts, createAccount, updateAccount, deleteAccount, setPrimaryAccount, transferFunds, executeMonthlyTransfer } from '../services/api';
 import type { Account, TransferRequest } from '../types';
 import type { ColumnsType } from 'antd/es/table';
@@ -11,6 +12,7 @@ import dayjs from 'dayjs';
 import { motion } from 'framer-motion';
 
 const { Title, Paragraph, Text } = Typography;
+const { useBreakpoint } = Grid; // 【核心修正】正确的使用方式
 
 const accountTypeMap = {
     wechat: { name: '微信钱包', icon: 'Wallet' },
@@ -32,6 +34,9 @@ const AccountsPage: React.FC = () => {
     const [editForm] = Form.useForm();
     const [transferForm] = Form.useForm();
     const { modal } = App.useApp();
+
+    const screens = useBreakpoint(); // 【核心修正】现在可以正确使用了
+    const isMobile = !screens.sm; 
 
     const fetchAccounts = useCallback(async () => {
         setLoading(true);
@@ -115,19 +120,103 @@ const AccountsPage: React.FC = () => {
         });
     };
 
+    const getActionMenuItems = (record: Account) => (
+        <Menu onClick={({ key }) => {
+            if (key === 'set_primary') handleSetPrimary(record.id);
+            if (key === 'edit') openEditModal(record);
+        }}>
+            <Menu.Item key="set_primary" icon={<StarOutlined />} disabled={record.is_primary}>
+                设为主账户
+            </Menu.Item>
+            <Menu.Item key="edit" icon={<EditOutlined />}>
+                编辑
+            </Menu.Item>
+            <Menu.Item key="delete" danger icon={<DeleteOutlined />}>
+                <Popconfirm 
+                  title="确定删除账户吗?" 
+                  description="请先确保账户余额为0。" 
+                  onConfirm={() => handleDelete(record.id)}
+                >
+                    <span style={{color: 'inherit'}}>删除</span>
+                </Popconfirm>
+            </Menu.Item>
+        </Menu>
+    );
+
     const columns: ColumnsType<Account> = [
-        { title: '账户名称', key: 'name', render: (_, record) => (<Space><IconDisplay name={record.icon} /><Text strong>{record.name}</Text>{record.is_primary && <Tag icon={<StarFilled />} color="gold">主账户</Tag>}</Space>) },
-        { title: '类型', dataIndex: 'type', key: 'type', responsive: ['md'], render: (type: keyof typeof accountTypeMap) => accountTypeMap[type].name },
-        { title: '余额', dataIndex: 'balance', key: 'balance', render: (balance: number) => <Text type={balance < 0 ? 'danger' : undefined}>¥{balance.toFixed(2)}</Text> },
-        { title: '操作', key: 'action', width: 150, align: 'center', responsive: ['sm'], render: (_, record) => (<Space><Tooltip title={record.is_primary ? "主账户" : "设为主账户"}><Button type="text" icon={record.is_primary ? <StarFilled /> : <StarOutlined />} onClick={() => handleSetPrimary(record.id)} disabled={record.is_primary} /></Tooltip><Tooltip title="编辑"><Button type="text" icon={<EditOutlined />} onClick={() => openEditModal(record)} /></Tooltip><Popconfirm title="确定删除账户吗?" description="请先确保账户余额为0。" onConfirm={() => handleDelete(record.id)}><Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} /></Tooltip></Popconfirm></Space>), },
+        { 
+            title: '账户名称', 
+            dataIndex: 'name',
+            key: 'name', 
+            render: (_, record) => (
+                <Space>
+                    <IconDisplay name={record.icon} />
+                    <Text strong>{record.name}</Text>
+                    {record.is_primary && <Tag icon={<StarFilled />} color="gold">主账户</Tag>}
+                </Space>
+            ) 
+        },
+        { 
+            title: '类型', 
+            dataIndex: 'type', 
+            key: 'type', 
+            responsive: ['md'], 
+            render: (type: keyof typeof accountTypeMap) => accountTypeMap[type].name 
+        },
+        { 
+            title: '余额', 
+            dataIndex: 'balance', 
+            key: 'balance', 
+            align: 'right', 
+            render: (balance: number) => <Text type={balance < 0 ? 'danger' : undefined}>¥{balance.toFixed(2)}</Text> 
+        },
+        { 
+            title: '操作', 
+            key: 'action', 
+            width: isMobile ? 60 : 150, 
+            align: 'center', 
+            render: (_, record) => (
+                isMobile ? (
+                    <Dropdown overlay={getActionMenuItems(record)} trigger={['click']}>
+                        <Button type="text" icon={<MoreOutlined />} />
+                    </Dropdown>
+                ) : (
+                    <Space>
+                        <Tooltip title={record.is_primary ? "主账户" : "设为主账户"}>
+                            <Button type="text" icon={record.is_primary ? <StarFilled /> : <StarOutlined />} onClick={() => handleSetPrimary(record.id)} disabled={record.is_primary} />
+                        </Tooltip>
+                        <Tooltip title="编辑">
+                            <Button type="text" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
+                        </Tooltip>
+                        <Popconfirm 
+                            title="确定删除账户吗?" 
+                            description="请先确保账户余额为0。" 
+                            onConfirm={() => handleDelete(record.id)}
+                        >
+                            <Tooltip title="删除">
+                                <Button type="text" danger icon={<DeleteOutlined />} />
+                            </Tooltip>
+                        </Popconfirm>
+                    </Space>
+                )
+            ), 
+        },
     ];
+
+    const finalColumns = isMobile ? columns.filter(c => c.responsive === undefined || !c.responsive.includes('md')) : columns;
+
 
     return (
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Card>
                 <Row justify="space-between" align="middle">
                     <Col><Title level={4} style={{ margin: 0 }}>账户管理</Title></Col>
-                    <Col><Space><Button icon={<SwapOutlined />} onClick={() => setIsTransferModalOpen(true)}>账户转账</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditModal(null)}>新增账户</Button></Space></Col>
+                    <Col>
+                        <Space>
+                            <Button icon={<SwapOutlined />} onClick={() => setIsTransferModalOpen(true)}>账户转账</Button>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditModal(null)}>新增账户</Button>
+                        </Space>
+                    </Col>
                 </Row>
             </Card>
             
@@ -136,7 +225,15 @@ const AccountsPage: React.FC = () => {
              </Card>
 
             <Card>
-                <Table columns={columns} dataSource={accounts} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} components={{ body: { row: MotionRow } }} scroll={{ x: 'max-content' }} />
+                <Table 
+                    columns={finalColumns} 
+                    dataSource={accounts} 
+                    rowKey="id" 
+                    loading={loading} 
+                    pagination={{ pageSize: 10 }} 
+                    components={{ body: { row: MotionRow } }} 
+                    scroll={{ x: 'max-content' }} 
+                />
             </Card>
 
             <Modal title={editingAccount ? '编辑账户' : '新增账户'} open={isEditModalOpen} onOk={editForm.submit} onCancel={handleCancel} destroyOnHidden>
