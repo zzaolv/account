@@ -7,7 +7,7 @@ import type {
     TransferRequest,
     Category, 
     LoanResponse,
-    SettleLoanRequest, // 【新增】
+    SettleLoanRequest,
     Budget, 
     DashboardCard, 
     AnalyticsChartsResponse, 
@@ -17,8 +17,11 @@ import type {
     DashboardWidgetsResponse
 } from '../types';
 
+// 【核心修改】将 baseURL 从绝对路径改为相对路径
+// 这使得无论应用部署在哪个域名下，API 请求都能正确指向当前域名的 /api/v1 路径
+// 然后由 Nginx 进行反向代理
 const apiClient = axios.create({
-    baseURL: 'http://localhost:8080/api/v1',
+    baseURL: '/api/v1', // 之前是 'http://localhost:8080/api/v1'
     timeout: 15000,
 });
 
@@ -54,7 +57,7 @@ export const createLoan = (loanData: UpdateLoanRequest) => apiClient.post('/loan
 export const updateLoan = (id: number, loanData: UpdateLoanRequest) => apiClient.put(`/loans/${id}`, loanData);
 export const deleteLoan = (id: number) => apiClient.delete(`/loans/${id}`);
 export const updateLoanStatus = (id: number, status: 'active') => apiClient.put(`/loans/${id}/status`, { status });
-export const settleLoan = (id: number, data: SettleLoanRequest) => apiClient.post(`/loans/${id}/settle`, data); // 【新增】
+export const settleLoan = (id: number, data: SettleLoanRequest) => apiClient.post(`/loans/${id}/settle`, data);
 
 
 // --- 预算 API ---
@@ -63,7 +66,11 @@ export const createOrUpdateBudget = (budgetData: { category_id: string | null; a
 export const deleteBudget = (id: number) => apiClient.delete(`/budgets/${id}`);
 
 // --- 数据管理 API ---
-export const exportData = () => { window.location.href = 'http://localhost:8080/api/v1/data/export'; };
+// 【重要修改】导出功能也需要使用相对路径
+export const exportData = () => {
+    // window.location.href = 'http://localhost:8080/api/v1/data/export'; // 旧的错误方式
+    window.location.href = '/api/v1/data/export'; // 新的正确方式
+};
 export const importData = (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
