@@ -16,7 +16,7 @@ import AddTransactionModalWrapper from './components/AddTransactionModal';
 import ProtectedRoute from './components/ProtectedRoute';
 import ForcePasswordChangeModal from './components/ForcePasswordChangeModal';
 
-import { useAuthStore, useCurrentUser, useMustChangePassword } from './stores/authStore';
+import { useAuthStore, useCurrentUser, useMustChangePassword, useIsAuthenticated } from './stores/authStore';
 import apiClient from './services/api';
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
@@ -36,7 +36,6 @@ const { useBreakpoint } = Grid;
 const pageVariants = { initial: { opacity: 0, y: 20 }, in: { opacity: 1, y: 0 }, out: { opacity: 0, y: -20 } };
 const pageTransition = { type: 'tween', ease: 'anticipate', duration: 0.5 } as const;
 
-// 【新增】一个全局加载组件
 const FullScreenLoader: React.FC = () => (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-color)' }}>
         <Card>
@@ -160,6 +159,7 @@ const MainLayout: React.FC = () => {
 
 const App: React.FC = () => {
     const mustChangePassword = useMustChangePassword();
+    const isAuthenticated = useIsAuthenticated();
     const { login, logout, refreshToken } = useAuthStore();
     const [isAppLoading, setIsAppLoading] = useState(true);
 
@@ -173,15 +173,16 @@ const App: React.FC = () => {
         },
     }));
 
-    // 【关键修改】应用启动时的认证检查逻辑
     useEffect(() => {
         const initializeAuth = async () => {
-            if (refreshToken) {
+            // 【关键修改】只在用户未认证时，才尝试用 refresh token 自动登录
+            if (refreshToken && !isAuthenticated) {
                 try {
                     const { data } = await apiClient.post('/auth/refresh', { refresh_token: refreshToken });
                     const newAccessToken = data.access_token;
                     const user = useAuthStore.getState().user;
                     if (user) {
+                       // 自动登录时，肯定不是首次登录，所以 mustChangePassword 为 false
                        login(newAccessToken, refreshToken, user, false);
                     } else {
                         logout();
@@ -194,7 +195,9 @@ const App: React.FC = () => {
         };
 
         initializeAuth();
-    }, [login, logout, refreshToken]); 
+        // 【关键修改】移除 login 和 logout 作为依赖项，因为它会造成不必要的重渲染循环。
+        // 这个 effect 的目的就是在应用启动时检查一次，所以依赖 refreshToken 和 isAuthenticated 就足够了。
+    }, [refreshToken, isAuthenticated]); 
 
     if (isAppLoading) {
         return <FullScreenLoader />;
