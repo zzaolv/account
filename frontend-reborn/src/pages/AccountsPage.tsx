@@ -1,12 +1,9 @@
 // src/pages/AccountsPage.tsx
 import React, { useState } from 'react';
-// 【关键修复】确保 Text 是从 Typography 中解构出来的
-import { Button, Card, Table, Tag, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Tooltip, Row, Col, Typography, App, Dropdown, Grid, Spin, DatePicker } from 'antd';
+import { Button, Card, Table, Tag, Modal, Form, Input, InputNumber, Select, Space, Popconfirm, Tooltip, Row, Col, Typography, App, Dropdown, Grid, DatePicker, Skeleton, Result, Empty, notification } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, StarFilled, StarOutlined, SwapOutlined, MoreOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-// 【关键修复】 transferFunds 函数不再需要，改为直接使用 addTransaction
 import { getAccounts, createAccount, updateAccount, deleteAccount, setPrimaryAccount, addTransaction } from '../services/api';
-// 【关键修复】 TransferRequest 类型不再需要
 import type { Account, UpdateAccountRequest, CreateAccountRequest, CreateTransactionRequest } from '../types';
 import type { ColumnsType } from 'antd/es/table';
 import IconDisplay, { availableIcons } from '../components/IconPicker';
@@ -14,71 +11,63 @@ import axios from 'axios';
 import dayjs from 'dayjs';
 import { motion } from 'framer-motion';
 
-// 【关键修复】确保 Text 是从 Typography 中解构出来的
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
 const accountTypeMap = { wechat: { name: '微信钱包' }, alipay: { name: '支付宝' }, card: { name: '储蓄卡' }, other: { name: '其他' } };
 const MotionRow = (props: any) => (<motion.tr {...props} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} />);
 
-const AccountsPage: React.FC = () => {
+// 金额格式化组件
+const FormattedInputNumber: React.FC<any> = (props) => (
+    <InputNumber
+        {...props}
+        formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+        parser={(value) => (value ? value.replace(/\$\s?|(,*)/g, '') : '')}
+    />
+);
+
+const AccountsPageContent: React.FC = () => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
     const [editingAccount, setEditingAccount] = useState<Account | null>(null);
     const [editForm] = Form.useForm();
     const [transferForm] = Form.useForm();
-    const { message: staticMessage } = App.useApp();
+    
     const screens = useBreakpoint();
     const isMobile = !screens.sm;
     const queryClient = useQueryClient();
+    const { message } = App.useApp();
 
-    const { data: accounts, isLoading, isError, error } = useQuery<Account[], Error>({
+    const { data: accounts = [], isLoading, isError, error, refetch } = useQuery<Account[], Error>({
         queryKey: ['accounts'],
         queryFn: () => getAccounts().then(res => res.data || []),
+        retry: 1,
     });
 
     const mutationOptions = (successMsg: string) => ({
         onSuccess: () => {
             handleCancel();
-            staticMessage.success(successMsg);
+            message.success(successMsg);
             queryClient.invalidateQueries({ queryKey: ['accounts'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboardCards'] });
             if (successMsg.includes('转账')) {
                 queryClient.invalidateQueries({ queryKey: ['transactions'] });
-                queryClient.invalidateQueries({ queryKey: ['dashboardCards'] });
             }
         },
         onError: (err: unknown) => {
             const errorMsg = axios.isAxiosError(err) && err.response ? err.response.data.error : '操作失败';
-            staticMessage.error(errorMsg);
+            notification.error({
+                message: '操作失败',
+                description: errorMsg,
+            });
         },
     });
 
-    const createMutation = useMutation({
-        mutationFn: (newData: CreateAccountRequest) => createAccount(newData),
-        ...mutationOptions('账户创建成功！'),
-    });
-
-    const updateMutation = useMutation({
-        mutationFn: (vars: { id: number; data: UpdateAccountRequest }) => updateAccount(vars.id, vars.data),
-        ...mutationOptions('账户更新成功！'),
-    });
-    
-    // 【关键修复】使用匿名函数包裹API调用，确保返回值为 void
-    const deleteMutation = useMutation<void, Error, number>({
-        mutationFn: async (id) => { await deleteAccount(id); },
-        ...mutationOptions('删除成功！'),
-    });
-
-    // 【关键修复】使用匿名函数包裹API调用，确保返回值为 void
-    const setPrimaryMutation = useMutation<void, Error, number>({
-        mutationFn: async (id) => { await setPrimaryAccount(id); },
-        ...mutationOptions('主账户设置成功！'),
-    });
-    
-    const transferMutation = useMutation({
-        mutationFn: (data: CreateTransactionRequest) => addTransaction(data),
-        ...mutationOptions('转账成功！'),
-    });
+    const createMutation = useMutation({ mutationFn: (newData: CreateAccountRequest) => createAccount(newData), ...mutationOptions('账户创建成功！') });
+    const updateMutation = useMutation({ mutationFn: (vars: { id: number; data: UpdateAccountRequest }) => updateAccount(vars.id, vars.data), ...mutationOptions('账户更新成功！') });
+    const deleteMutation = useMutation<void, Error, number>({ mutationFn: async (id) => { await deleteAccount(id); }, ...mutationOptions('删除成功！') });
+    const setPrimaryMutation = useMutation<void, Error, number>({ mutationFn: async (id) => { await setPrimaryAccount(id); }, ...mutationOptions('主账户设置成功！') });
+    const transferMutation = useMutation({ mutationFn: (data: CreateTransactionRequest) => addTransaction(data), ...mutationOptions('转账成功！') });
 
     const handleCancel = () => {
         setIsEditModalOpen(false); setIsTransferModalOpen(false); setEditingAccount(null);
@@ -112,23 +101,65 @@ const AccountsPage: React.FC = () => {
         transferMutation.mutate(postData);
     };
 
-    const getActionMenuItems = (record: Account) => ({
-        items: [
-            { key: 'set_primary', icon: <StarOutlined />, label: '设为主账户', disabled: record.is_primary, onClick: () => setPrimaryMutation.mutate(record.id) },
-            { key: 'edit', icon: <EditOutlined />, label: '编辑', onClick: () => openEditModal(record) },
-            { key: 'delete', danger: true, icon: <DeleteOutlined />, label: ( <Popconfirm title="确定删除账户吗?" description="请先确保账户余额为0。" onConfirm={() => deleteMutation.mutate(record.id)} disabled={record.is_primary}> <span style={{ color: record.is_primary ? 'rgba(0,0,0,0.25)' : 'inherit' }}>删除</span> </Popconfirm> ) },
-        ]
-    });
+    const getActionMenuItems = (record: Account) => {
+        const isDeleting = deleteMutation.isPending && deleteMutation.variables === record.id;
+        const isSettingPrimary = setPrimaryMutation.isPending && setPrimaryMutation.variables === record.id;
+        const isMutating = isDeleting || isSettingPrimary;
+
+        return {
+            items: [
+                { key: 'set_primary', icon: <StarOutlined />, label: '设为主账户', disabled: record.is_primary || isMutating, onClick: () => setPrimaryMutation.mutate(record.id) },
+                { key: 'edit', icon: <EditOutlined />, label: '编辑', disabled: isMutating, onClick: () => openEditModal(record) },
+                { key: 'delete', danger: true, icon: <DeleteOutlined />, label: ( <Popconfirm title="确定删除账户吗?" description="请先确保账户余额为0。" onConfirm={() => deleteMutation.mutate(record.id)} disabled={record.is_primary || isMutating}> <span style={{ color: (record.is_primary || isMutating) ? 'rgba(0,0,0,0.25)' : 'inherit' }}>删除</span> </Popconfirm> ) },
+            ]
+        };
+    };
     
     const columns: ColumnsType<Account> = [
         { title: '账户名称', dataIndex: 'name', key: 'name', render: (_, record: Account) => (<Space><IconDisplay name={record.icon} /><Text strong>{record.name}</Text>{record.is_primary && <Tag icon={<StarFilled />} color="gold">主账户</Tag>}</Space>) },
         { title: '类型', dataIndex: 'type', key: 'type', responsive: ['md'], render: (type: keyof typeof accountTypeMap) => accountTypeMap[type].name },
         { title: '余额', dataIndex: 'balance', key: 'balance', align: 'right', render: (balance: number) => <Text type={balance < 0 ? 'danger' : undefined}>¥{balance.toFixed(2)}</Text> },
-        { title: '操作', key: 'action', width: isMobile ? 60 : 150, align: 'center', render: (_, record: Account) => (isMobile ? (<Dropdown menu={getActionMenuItems(record)} trigger={['click']}><Button type="text" icon={<MoreOutlined />} /></Dropdown>) : (<Space><Tooltip title={record.is_primary ? "主账户" : "设为主账户"}><Button type="text" icon={record.is_primary ? <StarFilled /> : <StarOutlined />} onClick={() => setPrimaryMutation.mutate(record.id)} disabled={record.is_primary} loading={setPrimaryMutation.isPending && setPrimaryMutation.variables === record.id} /></Tooltip><Tooltip title="编辑"><Button type="text" icon={<EditOutlined />} onClick={() => openEditModal(record)} /></Tooltip><Popconfirm title="确定删除账户吗?" description="请先确保账户余额为0。" onConfirm={() => deleteMutation.mutate(record.id)} disabled={record.is_primary}><Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} loading={deleteMutation.isPending && deleteMutation.variables === record.id} disabled={record.is_primary} /></Tooltip></Popconfirm></Space>)) },
-    ];
-    
-    if (isError) { return <Card><Text type="danger">加载账户数据失败: {error.message}</Text></Card>; }
+        { title: '操作', key: 'action', width: isMobile ? 60 : 150, align: 'center', render: (_, record: Account) => {
+            const isDeleting = deleteMutation.isPending && deleteMutation.variables === record.id;
+            const isSettingPrimary = setPrimaryMutation.isPending && setPrimaryMutation.variables === record.id;
+            const isMutating = isDeleting || isSettingPrimary;
 
+            if (isMobile) return <Dropdown menu={getActionMenuItems(record)} trigger={['click']} disabled={isMutating}><Button type="text" icon={<MoreOutlined />} loading={isMutating} /></Dropdown>;
+
+            return (<Space>
+                <Tooltip title={record.is_primary ? "主账户" : "设为主账户"}><Button type="text" icon={record.is_primary ? <StarFilled /> : <StarOutlined />} onClick={() => setPrimaryMutation.mutate(record.id)} disabled={record.is_primary || isMutating} loading={isSettingPrimary} /></Tooltip>
+                <Tooltip title="编辑"><Button type="text" icon={<EditOutlined />} onClick={() => openEditModal(record)} disabled={isMutating} /></Tooltip>
+                <Popconfirm title="确定删除账户吗?" description="请先确保账户余额为0。" onConfirm={() => deleteMutation.mutate(record.id)} disabled={record.is_primary || isMutating}><Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} loading={isDeleting} disabled={record.is_primary || isMutating} /></Tooltip></Popconfirm>
+            </Space>);
+        }},
+    ];
+
+    const renderMainContent = () => {
+        if (isLoading) return <Card><Skeleton active paragraph={{ rows: 5 }} /></Card>;
+        if (isError) return <Card><Result status="error" title="账户数据加载失败" subTitle={`错误: ${error.message}`} extra={<Button type="primary" onClick={() => refetch()}>点击重试</Button>} /></Card>;
+        
+        // 【关键修改】使用正确的 Empty 组件用法
+        if (accounts.length === 0) return (
+            <Card>
+                <Empty description={
+                    <span>
+                        您还没有任何资金账户，快来添加第一个吧！
+                        <br />
+                        <Button type="primary" onClick={() => openEditModal(null)} style={{ marginTop: 16 }}>
+                            立即新增
+                        </Button>
+                    </span>
+                } />
+            </Card>
+        );
+
+        return (
+            <Card>
+                <Table columns={columns} dataSource={accounts} rowKey="id" pagination={{ pageSize: 10 }} components={{ body: { row: MotionRow } }} scroll={{ x: 'max-content' }} />
+            </Card>
+        );
+    }
+    
     return (
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Card>
@@ -138,26 +169,22 @@ const AccountsPage: React.FC = () => {
                 </Row>
             </Card>
 
-            <Card>
-                <Spin spinning={isLoading}>
-                    <Table columns={columns} dataSource={accounts} rowKey="id" pagination={{ pageSize: 10 }} components={{ body: { row: MotionRow } }} scroll={{ x: 'max-content' }} />
-                </Spin>
-            </Card>
+            {renderMainContent()}
 
-            <Modal title={editingAccount ? '编辑账户' : '新增账户'} open={isEditModalOpen} onOk={editForm.submit} onCancel={handleCancel} destroyOnHidden confirmLoading={createMutation.isPending || updateMutation.isPending}>
+            <Modal title={editingAccount ? '编辑账户' : '新增账户'} open={isEditModalOpen} onOk={editForm.submit} onCancel={handleCancel} destroyOnClose confirmLoading={createMutation.isPending || updateMutation.isPending}>
                 <Form form={editForm} layout="vertical" onFinish={handleEditFormSubmit}>
-                    <Form.Item name="name" label="账户名称" rules={[{ required: true }]}><Input /></Form.Item>
+                    <Form.Item name="name" label="账户名称" rules={[{ required: true }]} validateTrigger="onBlur"><Input /></Form.Item>
                     <Form.Item name="type" label="账户类型" rules={[{ required: true }]}><Select disabled={!!editingAccount}>{Object.entries(accountTypeMap).map(([key, { name }]) => <Select.Option key={key} value={key}>{name}</Select.Option>)}</Select></Form.Item>
-                    <Form.Item name="balance" label="初始余额" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} prefix="¥" precision={2} disabled={!!editingAccount} /></Form.Item>
+                    <Form.Item name="balance" label="初始余额" rules={[{ required: true }]}><FormattedInputNumber style={{ width: '100%' }} prefix="¥" precision={2} disabled={!!editingAccount} /></Form.Item>
                     <Form.Item name="icon" label="图标" rules={[{ required: true }]}><Select showSearch>{availableIcons.map((iconName: string) => (<Select.Option key={iconName} value={iconName}><Space><IconDisplay name={iconName} /> {iconName}</Space></Select.Option>))}</Select></Form.Item>
                 </Form>
             </Modal>
             
-            <Modal title="账户间转账" open={isTransferModalOpen} onOk={transferForm.submit} onCancel={handleCancel} destroyOnHidden confirmLoading={transferMutation.isPending}>
+            <Modal title="账户间转账" open={isTransferModalOpen} onOk={transferForm.submit} onCancel={handleCancel} destroyOnClose confirmLoading={transferMutation.isPending}>
                 <Form form={transferForm} layout="vertical" onFinish={handleTransferFormSubmit} initialValues={{ date: dayjs() }}>
-                     <Form.Item name="from_account_id" label="从账户" rules={[{ required: true }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('to_account_id') !== value) { return Promise.resolve(); } return Promise.reject(new Error('转出和转入账户不能相同!')); } })]}><Select placeholder="选择转出账户">{accounts?.map(acc => <Select.Option key={acc.id} value={acc.id}>{acc.name} (余额: {acc.balance.toFixed(2)})</Select.Option>)}</Select></Form.Item>
+                    <Form.Item name="from_account_id" label="从账户" rules={[{ required: true }, ({ getFieldValue }) => ({ validator(_, value) { if (!value || getFieldValue('to_account_id') !== value) { return Promise.resolve(); } return Promise.reject(new Error('转出和转入账户不能相同!')); } })]}><Select placeholder="选择转出账户">{accounts?.map(acc => <Select.Option key={acc.id} value={acc.id}>{acc.name} (余额: {acc.balance.toFixed(2)})</Select.Option>)}</Select></Form.Item>
                     <Form.Item name="to_account_id" label="到账户" rules={[{ required: true }]}><Select placeholder="选择转入账户">{accounts?.map(acc => <Select.Option key={acc.id} value={acc.id}>{acc.name}</Select.Option>)}</Select></Form.Item>
-                    <Form.Item name="amount" label="转账金额" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} prefix="¥" min={0.01} precision={2} /></Form.Item>
+                    <Form.Item name="amount" label="转账金额" rules={[{ required: true }]}><FormattedInputNumber style={{ width: '100%' }} prefix="¥" min={0.01} precision={2} /></Form.Item>
                     <Form.Item name="date" label="转账日期" rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
                     <Form.Item name="description" label="备注 (可选)"><Input.TextArea rows={2} /></Form.Item>
                 </Form>
@@ -166,11 +193,10 @@ const AccountsPage: React.FC = () => {
     );
 };
 
-// 增加 App 组件包裹，解决 antd 组件（如 message, modal）的上下文问题
-const AccountsPageWrapper: React.FC = () => (
+const AccountsPage: React.FC = () => (
     <App>
-        <AccountsPage />
+        <AccountsPageContent />
     </App>
 );
 
-export default AccountsPageWrapper;
+export default AccountsPage;

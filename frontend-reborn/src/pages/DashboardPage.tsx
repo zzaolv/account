@@ -1,6 +1,6 @@
 // src/pages/DashboardPage.tsx
 import React, { useState, useMemo } from 'react';
-import { Space, Row, Col, Card, Empty, DatePicker, Radio, Statistic, Tooltip, Typography, Progress, List, Tag, Divider, Skeleton } from 'antd';
+import { Space, Row, Col, Card, Empty, DatePicker, Radio, Statistic, Tooltip, Typography, Progress, List, Tag, Divider, Skeleton, Result, Button } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
 import { Line, Pie } from '@ant-design/charts';
 import { useQuery } from '@tanstack/react-query';
@@ -10,7 +10,7 @@ import IconDisplay from '../components/IconPicker';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { getSteppedColor } from '../utils/colorUtils';
-import { motion } from 'framer-motion';
+import { motion, useAnimation } from 'framer-motion';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 
 dayjs.extend(weekOfYear);
@@ -18,7 +18,7 @@ dayjs.extend(weekOfYear);
 const { Title, Text } = Typography;
 const { WeekPicker } = DatePicker;
 
-// --- 辅助函数部分保持不变 ---
+// --- 辅助函数部分 ---
 const fillMissingDaysForWeek = (data: ChartDataPoint[], weekStart: Dayjs): ChartDataPoint[] => {
     if (!data) return [];
     const dataMap = new Map(data.map(item => [parseInt(item.name, 10), item.value]));
@@ -52,7 +52,8 @@ const fillMissingMonths = (data: ChartDataPoint[], year: number): ChartDataPoint
     }
     return result;
 };
-// --- 其他组件部分保持不变 ---
+
+// --- 子组件部分 ---
 const MotionCol = motion(Col);
 const containerVariants = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.1 } } } as const;
 const itemVariants = { hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1, transition: { type: 'spring', stiffness: 100 } } } as const;
@@ -64,16 +65,20 @@ const LoanWidget: React.FC<{ loan: DashboardLoanInfo }> = ({ loan }) => { let ti
 const DashboardPage: React.FC = () => {
     const [pickerType, setPickerType] = useState<'week' | 'month' | 'year' | 'all'>('month');
     const [datePickerValue, setDatePickerValue] = useState<Dayjs | null>(dayjs());
+    const controls = useAnimation();
 
     const apiFilter = useMemo(() => {
-        if (!datePickerValue) return {};
-        if (pickerType === 'all') return {};
-        return { year: datePickerValue.year(), month: datePickerValue.month() + 1 };
+        if (pickerType === 'all' || !datePickerValue) return {};
+        const filter: { year: number, month?: number } = { year: datePickerValue.year() };
+        if (pickerType === 'month' || pickerType === 'week') {
+            filter.month = datePickerValue.month() + 1;
+        }
+        return filter;
     }, [datePickerValue, pickerType]);
 
-    const { data: cardsData, isLoading: isLoadingCards } = useQuery({ queryKey: ['dashboardCards', apiFilter], queryFn: () => getDashboardCards(apiFilter).then(res => { const cardOrder = ['总收入', '总支出', '净结余', '总存款']; return (res.data || []).sort((a, b) => cardOrder.indexOf(a.title) - cardOrder.indexOf(b.title)); }), });
-    const { data: charts, isLoading: isLoadingCharts } = useQuery<AnalyticsChartsResponse, Error>({ queryKey: ['analyticsCharts', apiFilter], queryFn: () => getAnalyticsCharts(apiFilter).then(res => res.data) });
-    const { data: widgets, isLoading: isLoadingWidgets } = useQuery<DashboardWidgetsResponse, Error>({ queryKey: ['dashboardWidgets', apiFilter], queryFn: () => getDashboardWidgets(apiFilter).then(res => res.data) });
+    const { data: cardsData, isLoading: isLoadingCards, isError: isErrorCards, error: errorCards, refetch: refetchCards } = useQuery({ queryKey: ['dashboardCards', apiFilter], queryFn: () => getDashboardCards(apiFilter).then(res => { const cardOrder = ['总收入', '总支出', '净结余', '总存款']; return (res.data || []).sort((a, b) => cardOrder.indexOf(a.title) - cardOrder.indexOf(b.title)); }), retry: 1 });
+    const { data: charts, isLoading: isLoadingCharts, isError: isErrorCharts, error: errorCharts, refetch: refetchCharts } = useQuery<AnalyticsChartsResponse, Error>({ queryKey: ['analyticsCharts', apiFilter], queryFn: () => getAnalyticsCharts(apiFilter).then(res => res.data), retry: 1 });
+    const { data: widgets, isLoading: isLoadingWidgets, isError: isErrorWidgets, error: errorWidgets, refetch: refetchWidgets } = useQuery<DashboardWidgetsResponse, Error>({ queryKey: ['dashboardWidgets', apiFilter], queryFn: () => getDashboardWidgets(apiFilter).then(res => res.data), retry: 1 });
 
     const processedChartData = useMemo(() => {
         if (!charts) return { expenseTrend: [], categoryExpense: [] };
@@ -89,89 +94,42 @@ const DashboardPage: React.FC = () => {
         } else {
             trendData = rawTrendData;
         }
-
         return { expenseTrend: trendData, categoryExpense: charts.category_expense || [] };
     }, [charts, pickerType, datePickerValue]);
+
+    const handleSwipe = (offset: { x: number; }) => {
+        if (pickerType !== 'month' && pickerType !== 'week') return;
+        const swipePower = Math.abs(offset.x);
+        if (swipePower > 50) {
+            const direction = offset.x > 0 ? -1 : 1;
+            setDatePickerValue(prev => prev ? prev.add(direction, pickerType) : dayjs().add(direction, pickerType));
+            controls.start({ x: [-10 * direction, 0], opacity: [0.5, 1], transition: { duration: 0.3 } });
+        }
+    };
 
     const handlePickerTypeChange = (e: any) => {
         const newType = e.target.value;
         setPickerType(newType);
-        if (newType === 'all') { 
-            setDatePickerValue(null); 
-        } else {
-            setDatePickerValue(dayjs());
-        }
-    }
-    
-    const handleDateChange = (date: Dayjs | null) => { 
-        setDatePickerValue(date); 
+        if (newType === 'all') { setDatePickerValue(null); } else { setDatePickerValue(dayjs()); }
     };
     
-    const lineChartConfig = { 
-        data: processedChartData.expenseTrend, 
-        xField: 'name', 
-        yField: 'value', 
-        smooth: true, 
-        height: 250, 
-        area: { style: { fill: 'l(270) 0:#ffffff 1:#bae0ff' } }, 
-        line: { style: { stroke: '#2f54eb', lineWidth: 2 } }, 
-        tooltip: {
-            title: (d: ChartDataPoint) => d.name,
-            items: [{ channel: 'y', name: '支出', valueFormatter: (d: number) => `¥ ${d.toFixed(2)}` }]
-        },
-    };
+    const handleDateChange = (date: Dayjs | null) => { setDatePickerValue(date); };
+    
+    const lineChartConfig = { data: processedChartData.expenseTrend, xField: 'name', yField: 'value', smooth: true, height: 250, area: { style: { fill: 'l(270) 0:#ffffff 1:#bae0ff' } }, line: { style: { stroke: '#2f54eb', lineWidth: 2 } }, tooltip: { title: (d: ChartDataPoint) => d.name, items: [{ channel: 'y', name: '支出', valueFormatter: (d: number) => `¥ ${d.toFixed(2)}` }] } };
+    const pieChartConfig = { data: processedChartData.categoryExpense, angleField: 'value', colorField: 'name', radius: 0.8, innerRadius: 0.7, legend: { position: 'top', layout: 'horizontal' } as const, label: false, interactions: [{ type: 'element-active' }], statistic: { title: { content: '总支出' }, content: { formatter: (_: any, data?: ChartDataPoint[]) => `¥${(data?.reduce((s, d) => s + (d?.value || 0), 0) || 0).toFixed(2)}` } }, tooltip: { items: [(item: ChartDataPoint) => { if (item.name && item.value) { return { name: item.name, value: `¥ ${Number(item.value).toFixed(2)}` }; } return null; }] } };
+    
+    const getFilterTitle = () => { if (pickerType === 'week' && datePickerValue) return `${datePickerValue.year()}年 第${datePickerValue.week()}周`; if (pickerType === 'month' && datePickerValue) return `${datePickerValue.year()}年${datePickerValue.month() + 1}月`; if (pickerType === 'year' && datePickerValue) return `${datePickerValue.year()}年`; return '全部时间'; };
+    
+    const renderDatePicker = () => { if (pickerType === 'week') { return <WeekPicker onChange={handleDateChange} value={datePickerValue} allowClear={false} />; } if (pickerType === 'month' || pickerType === 'year') { return <DatePicker picker={pickerType} onChange={handleDateChange} value={datePickerValue} allowClear={false} />; } return null; };
 
-    const pieChartConfig = { 
-        data: processedChartData.categoryExpense, 
-        angleField: 'value', 
-        colorField: 'name', 
-        
-        // 【核心修改】通过 padding 来控制图表大小
-        padding: 'auto', // 或者可以尝试一个具体的数值，如 40
-        appendPadding: 30, // 在外围增加一些额外的边距
-
-        radius: 0.5, // 保持环形图的半径
-        innerRadius: 0.7, 
-        height: 250, 
-        legend: { position: 'top', layout: 'horizontal' } as const, 
-        label: false,
-        interactions: [{ type: 'element-active' }], 
-        statistic: { 
-            title: { content: '总支出' }, 
-            content: { formatter: (_: any, data?: ChartDataPoint[]) => `¥${(data?.reduce((s, d) => s + (d?.value || 0), 0) || 0).toFixed(2)}` } 
-        },
-        tooltip: {
-            items: [
-                (item: ChartDataPoint) => {
-                    if (item.name && item.value) {
-                        return {
-                            name: item.name,
-                            value: `¥ ${Number(item.value).toFixed(2)}`
-                        };
-                    }
-                    return null;
-                },
-            ]
-        },
-    };
-
-
-    const getFilterTitle = () => { 
-        if (pickerType === 'week' && datePickerValue) return `${datePickerValue.year()}年 第${datePickerValue.week()}周`;
-        if (pickerType === 'month' && datePickerValue) return `${datePickerValue.year()}年${datePickerValue.month() + 1}月`; 
-        if (pickerType === 'year' && datePickerValue) return `${datePickerValue.year()}年`; 
-        return '全部时间'; 
-    }
-
-    const renderDatePicker = () => {
-        if (pickerType === 'week') {
-            return <WeekPicker onChange={handleDateChange} value={datePickerValue} allowClear={false} />;
-        }
-        if (pickerType === 'month' || pickerType === 'year') {
-            return <DatePicker picker={pickerType} onChange={handleDateChange} value={datePickerValue} allowClear={false} />;
-        }
-        return null;
-    }
+    const ErrorResult: React.FC<{ error: Error | null; onRetry: () => void; title: string }> = ({ error, onRetry, title }) => (
+        <Result
+            status="error"
+            title={title}
+            subTitle={`错误: ${error?.message || '未知错误'}`}
+            extra={<Button type="primary" onClick={onRetry}>点击重试</Button>}
+        />
+    );
 
     return (
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
@@ -188,31 +146,55 @@ const DashboardPage: React.FC = () => {
                 </Space>
             </Card>
             
-            <motion.div variants={containerVariants} initial="hidden" animate="visible">
-                <Row gutter={[24, 24]}>{isLoadingCards ? Array(4).fill(0).map((_, i) => <Col key={i} xs={24} sm={12} xl={6}><Card><Skeleton active paragraph={{ rows: 2 }} /></Card></Col>) : cardsData?.map((item) => (<MotionCol key={item.title} variants={itemVariants} xs={24} sm={12} xl={6}><StatCard item={item} /></MotionCol>))} </Row>
-            </motion.div>
+            <motion.div
+                drag="x"
+                dragConstraints={{ left: 0, right: 0 }}
+                dragElastic={0.2}
+                onDragEnd={(_, info) => handleSwipe(info.offset)}
+                animate={controls}
+            >
+                {isErrorCards ? (
+                    <Card><ErrorResult error={errorCards} onRetry={refetchCards} title="统计卡片加载失败" /></Card>
+                ) : (
+                    <motion.div variants={containerVariants} initial="hidden" animate="visible">
+                        <Row gutter={[24, 24]}>
+                            {isLoadingCards ? Array(4).fill(0).map((_, i) => <Col key={i} xs={24} sm={12} xl={6}><Card><Skeleton active paragraph={{ rows: 2 }} /></Card></Col>) : cardsData?.map((item) => (<MotionCol key={item.title} variants={itemVariants} xs={24} sm={12} xl={6}><StatCard item={item} /></MotionCol>))}
+                        </Row>
+                    </motion.div>
+                )}
 
-            <Row gutter={[24, 24]}>
-                <Col xs={24} lg={12}><Title level={5}>预算总览</Title>{isLoadingWidgets ? <Card><Skeleton active /></Card> : (widgets?.budgets && widgets.budgets.length > 0 ? <Row gutter={[16, 16]}>{widgets.budgets.map(b => <Col xs={24} sm={12} key={b.period}><BudgetProgressCard budget={b} /></Col>)}</Row> : <Card><Empty description="未设置预算" /></Card>)}</Col>
-                <Col xs={24} lg={12}><Title level={5}>在贷情况</Title>{isLoadingWidgets ? <Card><Skeleton active /></Card> : (<Card styles={{body: {padding: '1px 24px'}}}>{widgets?.loans && widgets.loans.length > 0 ? <List itemLayout="horizontal" dataSource={widgets.loans} renderItem={(item) => <LoanWidget loan={item} />} /> : <Empty description="恭喜！暂无在贷记录"/>}</Card>)}</Col>
-            </Row>
-            
-            <Divider orientation="left" plain><Title level={5} style={{color: '#8c8c8c'}}>{getFilterTitle()} 数据图表</Title></Divider>
-            
-            <Row gutter={[24, 24]}>
-                <Col xs={24} lg={14}>
-                    <Card styles={{body: { minHeight: 298 }}}>
-                        <Title level={5}>支出趋势</Title>
-                        {isLoadingCharts ? <Skeleton active /> : (processedChartData.expenseTrend.length > 0 && processedChartData.expenseTrend.some(p => p.value > 0) ? <Line {...lineChartConfig} /> : <Empty description="当前时段无支出趋势" />)}
-                    </Card>
-                </Col>
-                <Col xs={24} lg={10}>
-                    <Card styles={{body: { minHeight: 298 }}}>
-                        <Title level={5}>支出分类</Title>
-                        {isLoadingCharts ? <Skeleton active /> : (processedChartData.categoryExpense.length > 0 ? <Pie {...pieChartConfig} key={JSON.stringify(processedChartData.categoryExpense)} /> : <Empty description="当前时段无支出数据" />)}
-                    </Card>
-                </Col>
-            </Row>
+                <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
+                    <Col xs={24} lg={12}>
+                        <Title level={5}>预算总览</Title>
+                        {isErrorWidgets ? <Card><ErrorResult error={errorWidgets} onRetry={refetchWidgets} title="预算组件加载失败" /></Card> : isLoadingWidgets ? <Card><Skeleton active /></Card> : (widgets?.budgets && widgets.budgets.length > 0 ? <Row gutter={[16, 16]}>{widgets.budgets.map(b => <Col xs={24} sm={12} key={b.period}><BudgetProgressCard budget={b} /></Col>)}</Row> : <Card><Empty description="未设置预算" /></Card>)}
+                    </Col>
+                    <Col xs={24} lg={12}>
+                        <Title level={5}>在贷情况</Title>
+                        {isErrorWidgets ? <Card><ErrorResult error={errorWidgets} onRetry={refetchWidgets} title="贷款组件加载失败" /></Card> : isLoadingWidgets ? <Card><Skeleton active /></Card> : (<Card styles={{body: {padding: '1px 24px'}}}>{widgets?.loans && widgets.loans.length > 0 ? <List itemLayout="horizontal" dataSource={widgets.loans} renderItem={(item) => <LoanWidget loan={item} />} /> : <Empty description="恭喜！暂无在贷记录"/>}</Card>)}
+                    </Col>
+                </Row>
+                
+                <Divider orientation="left" plain style={{ marginTop: 24 }}><Title level={5} style={{color: '#8c8c8c'}}>{getFilterTitle()} 数据图表</Title></Divider>
+                
+                {isErrorCharts ? (
+                    <Card><ErrorResult error={errorCharts} onRetry={refetchCharts} title="图表数据加载失败" /></Card>
+                ) : (
+                    <Row gutter={[24, 24]}>
+                        <Col xs={24} lg={14}>
+                            <Card styles={{body: { minHeight: 298 }}}>
+                                <Title level={5}>支出趋势</Title>
+                                {isLoadingCharts ? <Skeleton active /> : (processedChartData.expenseTrend.length > 0 && processedChartData.expenseTrend.some(p => p.value > 0) ? <Line {...lineChartConfig} /> : <Empty description="当前时段无支出趋势" />)}
+                            </Card>
+                        </Col>
+                        <Col xs={24} lg={10}>
+                            <Card styles={{body: { minHeight: 298 }}}>
+                                <Title level={5}>支出分类</Title>
+                                {isLoadingCharts ? <Skeleton active /> : (processedChartData.categoryExpense.length > 0 ? <Pie {...pieChartConfig} key={JSON.stringify(processedChartData.categoryExpense)} /> : <Empty description="当前时段无支出数据" />)}
+                            </Card>
+                        </Col>
+                    </Row>
+                )}
+            </motion.div>
         </Space>
     );
 };
