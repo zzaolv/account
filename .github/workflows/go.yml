@@ -1,0 +1,51 @@
+name: Go Backend CI
+
+on:
+  push:
+    branches: [ "main", "develop" ] # 针对 main 和 develop 分支
+    paths:
+      - 'bookkeeper-app/**' # 只在后端代码变化时触发
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'bookkeeper-app/**'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    # 设置工作目录
+    defaults:
+      run:
+        working-directory: ./bookkeeper-app
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Install dependencies
+      run: go mod tidy
+
+    # (可选但强烈推荐) 安装并运行 linter
+    - name: Run linter
+      uses: golangci/golangci-lint-action@v6
+      with:
+        # 指定 linter 的工作目录
+        working-directory: bookkeeper-app
+        # action 会自动寻找 .golangci.yml 配置文件，如果找不到会使用默认配置
+        # 这里使用默认配置
+        args: --timeout=5m
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Test
+      # 运行测试时需要设置一个临时的 JWT 密钥
+      run: |
+        export JWT_SECRET_KEY="a_very_secret_key_for_github_actions_ci"
+        go test -v ./...

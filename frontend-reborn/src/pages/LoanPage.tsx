@@ -1,8 +1,6 @@
 // src/pages/LoanPage.tsx
 import React, { useState, useEffect, useCallback } from 'react';
-// 【新增】导入 Grid, Dropdown, Menu
-import { Button, Card, Table, Tag, message, Modal, Form, Input, InputNumber, DatePicker, Space, Popconfirm, Select, Typography, Grid, Dropdown, Menu } from 'antd';
-// 【新增】导入 MoreOutlined 图标
+import { Button, Card, Table, Tag,  Modal, Form, Input, InputNumber, DatePicker, Space, Popconfirm, Select, Typography, Grid, Dropdown, Menu, App } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, UndoOutlined, MoreOutlined } from '@ant-design/icons';
 import { getLoans, createLoan, updateLoan, deleteLoan, updateLoanStatus, getAccounts, settleLoan } from '../services/api';
 import type { LoanResponse, UpdateLoanRequest, Account, SettleLoanRequest } from '../types';
@@ -12,13 +10,13 @@ import axios from 'axios';
 import { motion } from 'framer-motion';
 
 const { Text, Title } = Typography;
-const { useBreakpoint } = Grid; // 【新增】正确使用 useBreakpoint
+const { useBreakpoint } = Grid;
 
 const MotionRow = (props: any) => (
     <motion.tr {...props} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }} />
 );
 
-const LoanPage: React.FC = () => {
+const LoanPageContent: React.FC = () => {
     const [loans, setLoans] = useState<LoanResponse[]>([]);
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [loading, setLoading] = useState(true);
@@ -28,9 +26,10 @@ const LoanPage: React.FC = () => {
     const [settlingLoan, setSettlingLoan] = useState<LoanResponse | null>(null);
     const [editForm] = Form.useForm();
     const [settleForm] = Form.useForm();
+    const { message: staticMessage } = App.useApp();
     
-    const screens = useBreakpoint(); // 【新增】获取屏幕断点信息
-    const isMobile = !screens.md; // 【新增】定义 md (768px) 以下为移动端，给借贷页面多一点空间
+    const screens = useBreakpoint();
+    const isMobile = !screens.md;
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -38,8 +37,8 @@ const LoanPage: React.FC = () => {
             const [loanRes, accountRes] = await Promise.all([getLoans(), getAccounts()]);
             setLoans(loanRes.data || []);
             setAccounts(accountRes.data || []);
-        } catch (error) { message.error('获取数据失败'); } finally { setLoading(false); }
-    }, []);
+        } catch (error) { staticMessage.error('获取数据失败'); } finally { setLoading(false); }
+    }, [staticMessage]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -61,10 +60,10 @@ const LoanPage: React.FC = () => {
     const handleEditFormSubmit = async (values: any) => {
         const postData: UpdateLoanRequest = { ...values, interest_rate: parseFloat(values.interest_rate) / 100, loan_date: values.loan_date.format('YYYY-MM-DD'), repayment_date: values.repayment_date ? values.repayment_date.format('YYYY-MM-DD') : null };
         try {
-            if (editingLoan) { await updateLoan(editingLoan.id, postData); message.success('借贷记录更新成功！');
-            } else { await createLoan(postData); message.success('借贷记录添加成功！'); }
+            if (editingLoan) { await updateLoan(editingLoan.id, postData); staticMessage.success('借贷记录更新成功！');
+            } else { await createLoan(postData); staticMessage.success('借贷记录添加成功！'); }
             handleCancel(); fetchData();
-        } catch (error) { message.error(axios.isAxiosError(error) ? error.response?.data.error : '操作失败'); }
+        } catch (error) { staticMessage.error(axios.isAxiosError(error) ? error.response?.data.error : '操作失败'); }
     };
 
     const handleSettleFormSubmit = async (values: any) => {
@@ -72,25 +71,24 @@ const LoanPage: React.FC = () => {
         const postData: SettleLoanRequest = { ...values, repayment_date: values.repayment_date.format('YYYY-MM-DD') };
         try {
             await settleLoan(settlingLoan.id, postData);
-            message.success('贷款已成功还清！'); handleCancel(); fetchData();
-        } catch (error) { message.error(axios.isAxiosError(error) ? error.response?.data.error : '还清操作失败'); }
+            staticMessage.success('贷款已成功还清！'); handleCancel(); fetchData();
+        } catch (error) { staticMessage.error(axios.isAxiosError(error) ? error.response?.data.error : '还清操作失败'); }
     };
     
     const handleRestoreStatus = async (id: number) => {
         try {
             await updateLoanStatus(id, 'active');
-            message.success('状态已恢复为 "活动中"！'); fetchData();
-        } catch (error) { message.error('恢复失败'); }
+            staticMessage.success('状态已恢复为 "活动中"！'); fetchData();
+        } catch (error) { staticMessage.error('恢复失败'); }
     };
 
     const handleDelete = async (id: number) => {
         try {
             await deleteLoan(id);
-            message.success('删除成功！'); fetchData();
-        } catch (error: unknown) { message.error(axios.isAxiosError(error) ? error.response?.data.error : '删除失败'); }
+            staticMessage.success('删除成功！'); fetchData();
+        } catch (error: unknown) { staticMessage.error(axios.isAxiosError(error) ? error.response?.data.error : '删除失败'); }
     };
 
-    // 【核心修改】定义借贷管理的操作菜单项
     const getActionMenuItems = (record: LoanResponse) => {
         const items = [];
         items.push(<Menu.Item key="edit" icon={<EditOutlined />} onClick={() => openEditModal(record)}>编辑</Menu.Item>);
@@ -126,15 +124,13 @@ const LoanPage: React.FC = () => {
             title: '操作', 
             key: 'action', 
             align: 'center', 
-            width: isMobile ? 60 : 220, // 移动端宽度变小
+            width: isMobile ? 60 : 220,
             render: (_, record: LoanResponse) => (
                 isMobile ? (
-                    // 移动端渲染 Dropdown
                     <Dropdown overlay={getActionMenuItems(record)} trigger={['click']}>
                         <Button type="text" icon={<MoreOutlined />} />
                     </Dropdown>
                 ) : (
-                    // 桌面端保持原有布局
                     <Space>
                         <Button type="link" icon={<EditOutlined />} onClick={() => openEditModal(record)}>编辑</Button>
                         {record.status === 'active' && (<Button type="link" icon={<CheckCircleOutlined />} onClick={() => openSettleModal(record)}>还清</Button>)}
@@ -146,10 +142,8 @@ const LoanPage: React.FC = () => {
         },
     ];
     
-    // 【优化】根据是否为移动端，动态生成最终的列配置
     const getFinalColumns = () => {
         if (!isMobile) return columns;
-        // 在移动端，我们只保留“描述”、“待还余额”和“操作”
         return columns.filter(col => ['description', 'outstanding_balance', 'action'].includes(String(col.key)));
     };
 
@@ -166,6 +160,7 @@ const LoanPage: React.FC = () => {
                     scroll={{ x: 'max-content' }}
                 />
             </Card>
+            {/* 【修复】destroyOnClose -> destroyOnHidden */}
             <Modal title={editingLoan ? "编辑借贷" : "新增借贷"} open={isEditModalOpen} onOk={editForm.submit} onCancel={handleCancel} destroyOnHidden>
                 <Form form={editForm} layout="vertical" onFinish={handleEditFormSubmit}>
                     <Form.Item name="description" label="描述" rules={[{ required: true }]}><Input /></Form.Item>
@@ -175,6 +170,7 @@ const LoanPage: React.FC = () => {
                     <Form.Item name="repayment_date" label="计划还款日期 (选填)" dependencies={['loan_date']} rules={[({ getFieldValue }) => ({ validator(_, value) { if (!value || !getFieldValue('loan_date') || !value.isBefore(getFieldValue('loan_date'))) { return Promise.resolve(); } return Promise.reject(new Error('还款日期不能早于借款日期！')); }, }), ]}><DatePicker style={{ width: '100%' }} /></Form.Item>
                 </Form>
             </Modal>
+            {/* 【修复】destroyOnClose -> destroyOnHidden */}
             <Modal title="确认还清贷款" open={isSettleModalOpen} onOk={settleForm.submit} onCancel={handleCancel} destroyOnHidden>
                 <Form form={settleForm} layout="vertical" onFinish={handleSettleFormSubmit}>
                     <p>您正在为贷款“<Text strong>{settlingLoan?.description || `贷款 #${settlingLoan?.id}`}</Text>”进行结算。</p>
@@ -187,5 +183,11 @@ const LoanPage: React.FC = () => {
         </Space>
     );
 };
+
+const LoanPage: React.FC = () => (
+    <App>
+        <LoanPageContent />
+    </App>
+);
 
 export default LoanPage;

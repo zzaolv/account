@@ -1,10 +1,13 @@
-// src/types.ts
+// frontend-reborn/src/types.ts
+
 export interface Category {
   id: string;
   name: string;
   type: 'income' | 'expense' | 'internal';
   icon: string;
   created_at: string;
+  is_shared: boolean;
+  is_editable: boolean;
 }
 
 export interface Transaction {
@@ -17,6 +20,17 @@ export interface Transaction {
   category_id?: string;
   category_name?: string;
   created_at: string;
+  from_account_id?: number;
+  from_account_name?: string; // 新增
+  to_account_id?: number;
+  to_account_name?: string;   // 新增
+}
+
+export interface CreateCategoryRequest {
+  id: string;
+  name: string;
+  type: 'income' | 'expense';
+  icon: string;
 }
 
 export interface Loan {
@@ -62,8 +76,8 @@ export interface CreateTransactionRequest {
   description?: string;
   category_id?: string;
   related_loan_id?: number;
-  from_account_id?: number;
-  to_account_id?: number;
+  from_account_id?: number; // 对于 expense, repayment, transfer 是必须的
+  to_account_id?: number;   // 对于 income, transfer 是必须的
 }
 
 export interface UpdateLoanRequest {
@@ -74,7 +88,6 @@ export interface UpdateLoanRequest {
   description?: string;
 }
 
-// 【新增并导出】这个接口之前被遗漏了
 export interface SettleLoanRequest {
   from_account_id: number;
   repayment_date: string;
@@ -164,4 +177,13 @@ export interface DashboardLoanInfo {
 export interface DashboardWidgetsResponse {
     budgets: DashboardBudgetSummary[];
     loans: DashboardLoanInfo[];
+}
+
+// 【新增】为预算创建/更新操作定义请求类型
+export interface CreateOrUpdateBudgetRequest {
+    category_id: string | null;
+    amount: number;
+    period: 'monthly' | 'yearly';
+    year: number;
+    month?: number; // 对于月度预算是必须的
 }

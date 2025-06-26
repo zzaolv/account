@@ -4,73 +4,150 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
-	"os" // 【新增】导入 os 包以读取环境变量
+	"log/slog"
+	"os"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	_ "github.com/mattn/go-sqlite3" // 导入驱动
 )
 
-// 【修改】getDBPath 函数会智能地决定数据库路径
+var jwtKey = []byte(os.Getenv("JWT_SECRET_KEY"))
+
 func getDBPath() string {
-	// 优先从环境变量 DB_PATH 中获取路径
 	if path := os.Getenv("DB_PATH"); path != "" {
 		return path
 	}
-	// 如果环境变量未设置，则使用适用于本地开发的相对路径
 	return "./simple_ledger.db"
 }
 
-// initializeDB 初始化数据库连接并创建表
-func initializeDB() (*sql.DB, error) {
+// initializeDB 初始化数据库连接并创建表 (【最终修正版】)
+func initializeDB(logger *slog.Logger) (*sql.DB, error) {
 	dbPath := getDBPath()
-	log.Printf("正在连接数据库: %s", dbPath) // 增加日志方便调试
+	logger.Info("正在连接数据库", "path", dbPath)
 
-	// 【重要】在连接字符串中添加 `_foreign_keys=on` 以强制启用外键约束
 	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 
-	// ... [后续的数据库表创建逻辑完全保持不变] ...
-	baseTables := []string{
-		`CREATE TABLE IF NOT EXISTS categories (
-            "id" TEXT NOT NULL PRIMARY KEY,
-            "name" TEXT NOT NULL UNIQUE,
-            "type" TEXT NOT NULL,
-            "icon" TEXT,
-            "created_at" TEXT NOT NULL
-        );`,
-		`CREATE TABLE IF NOT EXISTS loans (
-            "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-            "principal" REAL NOT NULL,
-            "interest_rate" REAL NOT NULL,
-            "loan_date" TEXT NOT NULL,
-            "repayment_date" TEXT,
-            "description" TEXT,
-            "status" TEXT NOT NULL,
-            "created_at" TEXT NOT NULL
-        );`,
-		`CREATE TABLE IF NOT EXISTS accounts (
-            "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-            "name" TEXT NOT NULL,
-            "type" TEXT NOT NULL,
-            "balance" REAL NOT NULL DEFAULT 0,
-            "icon" TEXT,
-            "is_primary" INTEGER NOT NULL DEFAULT 0,
-            "created_at" TEXT NOT NULL
-        );`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS one_primary_account_idx ON accounts (is_primary) WHERE is_primary = 1;`,
+	// === 使用事务来确保所有表结构创建的原子性 ===
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("开启数据库事务失败: %w", err)
 	}
-	for _, sql := range baseTables {
-		if _, err := db.Exec(sql); err != nil {
-			return nil, fmt.Errorf("创建基础表失败: %w\nSQL: %s", err, sql)
-		}
+	defer tx.Rollback() // 如果中间出错，回滚所有操作
+
+	// === 1. 创建所有基础表结构 (按顺序执行，并检查每一步) ===
+
+	// 用户表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS users (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "username" TEXT NOT NULL UNIQUE,
+        "password_hash" TEXT NOT NULL,
+        "is_admin" INTEGER NOT NULL DEFAULT 0,
+        "must_change_password" INTEGER NOT NULL DEFAULT 0,
+        "created_at" TEXT NOT NULL,
+        "failed_login_attempts" INTEGER NOT NULL DEFAULT 0,
+        "lockout_until" TEXT
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 users 表失败: %w", err)
 	}
 
-	transactionsTableSQL := `
+	// 共享分类表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS shared_categories (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL UNIQUE,
+        "type" TEXT NOT NULL,
+        "icon" TEXT,
+        "is_editable" INTEGER NOT NULL DEFAULT 1,
+        "created_at" TEXT NOT NULL
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 shared_categories 表失败: %w", err)
+	}
+
+	// 用户私有分类表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+        "id" TEXT NOT NULL,
+        "user_id" INTEGER NOT NULL,
+        "name" TEXT NOT NULL,
+        "type" TEXT NOT NULL,
+        "icon" TEXT,
+        "created_at" TEXT NOT NULL,
+        PRIMARY KEY("id", "user_id"),
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 categories 表失败: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_user_name ON categories (user_id, name);`); err != nil {
+		return nil, fmt.Errorf("为 categories 创建唯一索引失败: %w", err)
+	}
+
+	// 账户表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS accounts (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "user_id" INTEGER NOT NULL,
+        "name" TEXT NOT NULL,
+        "type" TEXT NOT NULL,
+        "balance" REAL NOT NULL DEFAULT 0,
+        "icon" TEXT,
+        "is_primary" INTEGER NOT NULL DEFAULT 0,
+        "created_at" TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, name)
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 accounts 表失败: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS one_primary_account_per_user_idx ON accounts (user_id) WHERE is_primary = 1;`); err != nil {
+		// 注意: 旧版 SQLite 不支持部分索引。如果这里出错，可以考虑移除这个索引，或者升级 SQLite。
+		// 为了兼容性，我们可以先忽略这个索引的创建错误。
+		logger.Warn("创建 accounts 的部分唯一索引失败，可能是 SQLite 版本过低，但不影响核心功能", "error", err)
+	}
+
+	// 借贷表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS loans (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "user_id" INTEGER NOT NULL,
+        "principal" REAL NOT NULL,
+        "interest_rate" REAL NOT NULL,
+        "loan_date" TEXT NOT NULL,
+        "repayment_date" TEXT,
+        "description" TEXT,
+        "status" TEXT NOT NULL,
+        "created_at" TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 loans 表失败: %w", err)
+	}
+
+	// 预算表 (【关键】)
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS budgets (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "user_id" INTEGER NOT NULL,
+        "category_id" TEXT,
+        "amount" REAL NOT NULL,
+        "period" TEXT NOT NULL,
+        "year" INTEGER,
+        "month" INTEGER,
+        "created_at" TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, period, year, month, category_id)
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 budgets 表失败: %w", err)
+	}
+
+	// 流水表 (依赖其他表，最后创建)
+	if _, err := tx.Exec(`
     CREATE TABLE IF NOT EXISTS transactions (
         "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "user_id" INTEGER NOT NULL,
         "type" TEXT NOT NULL,
         "amount" REAL NOT NULL,
         "transaction_date" TEXT NOT NULL,
@@ -78,146 +155,157 @@ func initializeDB() (*sql.DB, error) {
         "created_at" TEXT NOT NULL,
         "category_id" TEXT,
         "related_loan_id" INTEGER,
-        FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE RESTRICT,
-        FOREIGN KEY(related_loan_id) REFERENCES loans(id) ON DELETE SET NULL
-    );`
-	if _, err := db.Exec(transactionsTableSQL); err != nil {
+        "from_account_id" INTEGER,
+        "to_account_id" INTEGER,
+        "settlement_month" TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY(related_loan_id) REFERENCES loans(id) ON DELETE SET NULL,
+        FOREIGN KEY(from_account_id) REFERENCES accounts(id) ON DELETE SET NULL,
+        FOREIGN KEY(to_account_id) REFERENCES accounts(id) ON DELETE SET NULL
+    );`); err != nil {
 		return nil, fmt.Errorf("创建 transactions 表失败: %w", err)
 	}
 
-	if !isColumnExists(db, "transactions", "from_account_id") {
-		alterSQL := `ALTER TABLE transactions ADD COLUMN from_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;`
-		if _, err := db.Exec(alterSQL); err != nil {
-			return nil, fmt.Errorf("为 transactions 表添加 from_account_id 列失败: %w", err)
-		}
-	}
-	if !isColumnExists(db, "transactions", "to_account_id") {
-		alterSQL := `ALTER TABLE transactions ADD COLUMN to_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;`
-		if _, err := db.Exec(alterSQL); err != nil {
-			return nil, fmt.Errorf("为 transactions 表添加 to_account_id 列失败: %w", err)
-		}
-	}
-	if !isColumnExists(db, "transactions", "settlement_month") {
-		alterSQL := `ALTER TABLE transactions ADD COLUMN settlement_month TEXT;`
-		if _, err := db.Exec(alterSQL); err != nil {
-			return nil, fmt.Errorf("为 transactions 表添加 settlement_month 列失败: %w", err)
-		}
-	}
-	uniqueSettlementIndexSQL := `CREATE UNIQUE INDEX IF NOT EXISTS one_settlement_per_month_idx ON transactions (settlement_month) WHERE settlement_month IS NOT NULL;`
-	if _, err := db.Exec(uniqueSettlementIndexSQL); err != nil {
-		return nil, fmt.Errorf("为 settlement_month 创建唯一索引失败: %w", err)
-	}
-
-	budgetsTableSQL := `
-    CREATE TABLE IF NOT EXISTS budgets (
+	// 登录历史表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS login_history (
         "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-        "category_id" TEXT,
-        "amount" REAL NOT NULL,
-        "period" TEXT NOT NULL,
-        "created_at" TEXT NOT NULL,
-        FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE CASCADE,
-        UNIQUE(period, category_id)
-    );`
-	if _, err := db.Exec(budgetsTableSQL); err != nil {
-		return nil, fmt.Errorf("创建 budgets 表失败: %w", err)
+        "user_id" INTEGER,
+        "username_attempt" TEXT NOT NULL,
+        "ip_address" TEXT,
+        "user_agent" TEXT,
+        "status" TEXT NOT NULL, -- 'success' or 'failure'
+        "created_at" TEXT NOT NULL
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 login_history 表失败: %w", err)
 	}
 
-	seedCategories(db)
-	fmt.Println("✅ 数据库检查/初始化成功!")
+	// Refresh Tokens 表
+	if _, err := tx.Exec(`
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "user_id" INTEGER NOT NULL,
+        "token_hash" TEXT NOT NULL UNIQUE,
+        "expires_at" TEXT NOT NULL,
+        "created_at" TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );`); err != nil {
+		return nil, fmt.Errorf("创建 refresh_tokens 表失败: %w", err)
+	}
+
+	// 提交事务，完成所有表的创建
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("提交数据库结构创建事务失败: %w", err)
+	}
+
+	// === 2. 种子数据 (在表结构创建成功后执行) ===
+	seedSharedCategories(db, logger)
+	seedAdminUser(db, logger)
+
+	logger.Info("✅ 数据库检查/初始化成功!")
 	return db, nil
 }
 
-func isColumnExists(db *sql.DB, tableName, columnName string) bool {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
-	if err != nil {
-		log.Printf("检查列存在性失败 (PRAGMA): %v", err)
-		return false
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, typeName string
-		var dfltValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &typeName, new(int), &dfltValue, &pk); err != nil {
-			log.Printf("检查列存在性失败 (scan): %v", err)
-			return false
-		}
-		if name == columnName {
-			return true
-		}
-	}
-	return false
+// ... (省略 hashPassword, seedSharedCategories, seedAdminUser, main 函数，它们不需要修改)
+
+func hashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
 }
 
-func seedCategories(db *sql.DB) {
+func seedSharedCategories(db *sql.DB, logger *slog.Logger) {
 	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM categories").Scan(&count)
+	db.QueryRow("SELECT COUNT(*) FROM shared_categories").Scan(&count)
+	if count > 0 {
+		return
+	}
+	logger.Info("共享分类为空，正在插入预设分类...")
+
+	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("检查分类数量失败: %v", err)
+		logger.Error("开始填充共享分类事务失败", "error", err)
+		return
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("INSERT INTO shared_categories (id, name, type, icon, is_editable, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		logger.Error("准备共享分类插入语句失败", "error", err)
+		return
+	}
+	defer stmt.Close()
+
+	defaultCategories := getDefaultCategories()
+	createdAt := time.Now().Format(time.RFC3339)
+
+	for _, cat := range defaultCategories {
+		isEditable := 1
+		if cat.ID == "transfer" || cat.ID == "loan_repayment" || cat.ID == "settlement" {
+			isEditable = 0
+		}
+		_, err := stmt.Exec(cat.ID, cat.Name, cat.Type, cat.Icon, isEditable, createdAt)
+		if err != nil {
+			logger.Error("插入共享分类失败", "category", cat.Name, "error", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		logger.Error("提交共享分类事务失败", "error", err)
+		return
+	}
+	logger.Info("✅ 共享分类插入完成!")
+}
+
+func seedAdminUser(db *sql.DB, logger *slog.Logger) {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM users WHERE username = 'admin'").Scan(&count)
+	if err != nil {
+		logger.Error("检查 admin 用户是否存在失败", "error", err)
 		return
 	}
 	if count > 0 {
 		return
 	}
-	fmt.Println("数据库为空，正在插入预设分类...")
-	tx, err := db.Begin()
+
+	logger.Info("数据库中未找到 admin 用户，正在创建...")
+	hashedPassword, err := hashPassword("admin")
 	if err != nil {
-		log.Printf("开始事务失败: %v", err)
+		logger.Error("为 admin 用户哈希初始密码失败", "error", err)
 		return
 	}
-	stmt, err := tx.Prepare("INSERT INTO categories (id, name, type, icon, created_at) VALUES (?, ?, ?, ?, ?)")
-	if err != nil {
-		log.Printf("准备预设分类语句失败: %v", err)
-		tx.Rollback()
-		return
-	}
-	defer stmt.Close()
-
-	defaultCategories := []Category{
-		{ID: "salary", Name: "工资", Type: "income", Icon: "Landmark"},
-		{ID: "investments", Name: "投资", Type: "income", Icon: "TrendingUp"},
-		{ID: "freelance", Name: "兼职", Type: "income", Icon: "Briefcase"},
-		{ID: "rent_mortgage", Name: "房租房贷", Type: "expense", Icon: "Home"},
-		{ID: "food_dining", Name: "餐饮", Type: "expense", Icon: "Utensils"},
-		{ID: "transportation", Name: "交通", Type: "expense", Icon: "Car"},
-		{ID: "shopping", Name: "购物", Type: "expense", Icon: "ShoppingBag"},
-		{ID: "utilities", Name: "生活缴费", Type: "expense", Icon: "Zap"},
-		{ID: "entertainment", Name: "娱乐", Type: "expense", Icon: "Film"},
-		{ID: "health_wellness", Name: "健康", Type: "expense", Icon: "HeartPulse"},
-		{ID: "loan_repayment", Name: "还贷", Type: "expense", Icon: "ReceiptText"},
-		{ID: "interest_expense", Name: "利息支出", Type: "expense", Icon: "Percent"},
-		{ID: "other", Name: "其他", Type: "expense", Icon: "Archive"},
-		{ID: "transfer", Name: "账户互转", Type: "internal", Icon: "ArrowRightLeft"},
-		{ID: "settlement", Name: "月度结算", Type: "internal", Icon: "BookCheck"},
-	}
-
 	createdAt := time.Now().Format(time.RFC3339)
-	for _, cat := range defaultCategories {
-		_, err := stmt.Exec(cat.ID, cat.Name, cat.Type, cat.Icon, createdAt)
-		if err != nil {
-			log.Printf("插入预设分类 '%s' 失败: %v", cat.Name, err)
-			tx.Rollback()
-			return
-		}
+	_, err = db.Exec(
+		"INSERT INTO users (username, password_hash, is_admin, must_change_password, created_at) VALUES (?, ?, ?, ?, ?)",
+		"admin", hashedPassword, 1, 1, createdAt,
+	)
+	if err != nil {
+		logger.Error("插入 admin 用户失败", "error", err)
+	} else {
+		logger.Info("✅ 默认 admin 用户创建成功 (密码: admin)，首次登录需修改密码。")
 	}
-	if err := tx.Commit(); err != nil {
-		log.Printf("提交预设分类事务失败: %v", err)
-		return
-	}
-	fmt.Println("✅ 预设分类插入完成!")
 }
 
 func main() {
-	db, err := initializeDB()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	if len(jwtKey) == 0 {
+		logger.Error("关键错误: 环境变量 JWT_SECRET_KEY 未设置。服务器无法启动。请设置一个足够长的随机字符串。")
+		os.Exit(1)
+	}
+
+	db, err := initializeDB(logger)
 	if err != nil {
-		log.Fatalf("数据库初始化错误: %v", err)
+		logger.Error("数据库初始化错误", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
-	handler := &DBHandler{DB: db}
+
+	handler := &DBHandler{DB: db, Logger: logger}
 	router := setupRouter(handler)
-	fmt.Println("🚀 服务器启动于 http://localhost:8080")
+
+	logger.Info("🚀 服务器启动于 http://localhost:8080")
 	if err := router.Run(":8080"); err != nil {
-		log.Fatalf("服务器启动失败: %v", err)
+		logger.Error("服务器启动失败", "error", err)
+		os.Exit(1)
 	}
 }

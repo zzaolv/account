@@ -10,7 +10,8 @@ services:
     # 【新增】设置环境变量，告诉 Go 程序在容器内使用这个路径
     environment:
       - DB_PATH=/data/simple_ledger.db
-    # 【修改】使用命名卷（named volume）来持久化数据，这是最佳实践
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY} # 从环境变量中读取 JWT 密钥
+    # 使用命名卷（named volume）来持久化数据
     volumes:
       - db-data:/data
     ports:
